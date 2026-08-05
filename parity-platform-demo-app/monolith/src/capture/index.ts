@@ -5,6 +5,7 @@ import { writeLock } from './lock.js';
 import { markCall, extractWriteSet } from './writeset.js';
 import { decide } from './sampler.js';
 import { record, captureEnabled } from './recorder.js';
+import { ensureCustomerFacts } from './facts.js';
 
 /**
  * The capture wrapper. Everything the estate does passes through here because
@@ -58,7 +59,9 @@ export async function withCapture<T extends RawResult>(
   if (!captureEnabled()) return invoke();
 
   const ctx = currentContext();
-  const decision = decide(procName, params);
+  // Country and loyalty tier are branch selectors these procedures resolve internally.
+  const facts = await ensureCustomerFacts().catch(() => undefined);
+  const decision = decide(procName, params, facts);
   const writeCapable = isWriteCapable(procName);
 
   // A captured write owns the Change Tracking version window and must exclude every
@@ -108,3 +111,4 @@ export async function withCapture<T extends RawResult>(
 export { flush, stats } from './recorder.js';
 export { samplerStats, resetSampler } from './sampler.js';
 export { resetWriteSetCache } from './writeset.js';
+export { resetCustomerFacts } from './facts.js';

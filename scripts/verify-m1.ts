@@ -21,6 +21,14 @@ const FINGERPRINT_PATH = join(ROOT, 'scripts', 'traffic-checksum.json');
 const DEMO_EPOCH = new Date('2026-08-05T00:00:00.000Z');
 const HISTORY_DAYS = 90;
 
+/**
+ * verify-m1 issues one live probe call of its own for the replay check. That row has a
+ * real timestamp (outside the 90-day simulated window) and would otherwise bump the
+ * fingerprint on every run, so the script would not be idempotent and would fail its own
+ * determinism assertion. A gate must not perturb what it measures.
+ */
+const NOT_VERIFY = "WHERE (CallerContext IS NULL OR CallerContext NOT LIKE 'verify:%')";
+
 const LIVE_PROCEDURES = [
   'sp_SearchProducts', 'sp_GetProductDetail', 'sp_GetProductAvailability', 'sp_GetCartSummary',
   'sp_CalculateOrderTotal', 'sp_ApplyPromoCode', 'sp_ReserveStock', 'sp_PlaceOrder',
@@ -79,7 +87,7 @@ async function fingerprint(pool: sql.ConnectionPool): Promise<Fingerprint> {
   const q = async <T>(text: string): Promise<T[]> => (await pool.request().query(text)).recordset as T[];
 
   const perProc = await q<{ ProcName: string; n: number }>(
-    'SELECT ProcName, COUNT(*) AS n FROM parity_capture.Invocation GROUP BY ProcName',
+    `SELECT ProcName, COUNT(*) AS n FROM parity_capture.Invocation ${NOT_VERIFY} GROUP BY ProcName`,
   );
   const rare = await q<{ CallerContext: string; n: number }>(
     `SELECT CallerContext, COUNT(*) AS n FROM parity_capture.Invocation
@@ -89,7 +97,7 @@ async function fingerprint(pool: sql.ConnectionPool): Promise<Fingerprint> {
     SELECT COUNT(*) AS total,
            COUNT(DISTINCT BranchKey) AS branches,
            COUNT(DISTINCT CAST(CalledAt AS DATE)) AS days
-    FROM parity_capture.Invocation`);
+    FROM parity_capture.Invocation ${NOT_VERIFY}`);
 
   return {
     totalInvocations: Number(totals.total),
@@ -233,7 +241,7 @@ async function main(): Promise<void> {
     // --- window --------------------------------------------------------------
     section('90-day window');
     const [window] = await q<{ minAt: Date; maxAt: Date; days: number }>(
-      'SELECT MIN(CalledAt) AS minAt, MAX(CalledAt) AS maxAt, COUNT(DISTINCT CAST(CalledAt AS DATE)) AS days FROM parity_capture.Invocation',
+      `SELECT MIN(CalledAt) AS minAt, MAX(CalledAt) AS maxAt, COUNT(DISTINCT CAST(CalledAt AS DATE)) AS days FROM parity_capture.Invocation ${NOT_VERIFY}`,
     );
     const lowerBound = new Date(DEMO_EPOCH.getTime() - (HISTORY_DAYS + 1) * 86_400_000);
     check(window.minAt >= lowerBound && window.maxAt <= DEMO_EPOCH,
@@ -241,20 +249,36 @@ async function main(): Promise<void> {
       `${window.minAt.toISOString().slice(0, 10)} .. ${window.maxAt.toISOString().slice(0, 10)}`);
     check(Number(window.days) >= 85, 'history spans ~90 distinct days', `${window.days} days`);
 
+    // --- store bounded -------------------------------------------------------
+    // SPEC §3: "Store bounded — the whole capture table stays under ~200 MB."
+    section('Store bounded (SPEC §3)');
+    const [size] = await q<{ mb: number }>(`
+      SELECT CAST(SUM(a.total_pages) * 8.0 / 1024 AS DECIMAL(10,1)) AS mb
+      FROM sys.tables t
+      JOIN sys.indexes i      ON i.object_id = t.object_id
+      JOIN sys.partitions p   ON p.object_id = t.object_id AND p.index_id = i.index_id
+      JOIN sys.allocation_units a ON a.container_id = p.partition_id
+      WHERE SCHEMA_NAME(t.schema_id) = 'parity_capture'`);
+    check(Number(size.mb) < 200, 'capture table stays under 200 MB', `${size.mb} MB`);
+
     // --- rare branches -------------------------------------------------------
+    // Presence is not enough: a rare branch that exists but was never SAMPLED has no
+    // result set and no write set, so M4 and M5 cannot use it. Assert it was captured.
     section('Rare branches');
     for (const branch of RARE_BRANCHES) {
-      const n = await scalar(
-        `SELECT COUNT(*) AS n FROM parity_capture.Invocation WHERE CallerContext = 'traffic:${branch}'`,
+      const [row] = await q<{ n: number; sampled: number }>(
+        `SELECT COUNT(*) AS n, SUM(CAST(Sampled AS INT)) AS sampled
+         FROM parity_capture.Invocation WHERE CallerContext = 'traffic:${branch}'`,
       );
-      check(n > 0, `rare branch present: ${branch}`, `${n} invocations`);
+      check(Number(row.n) > 0 && Number(row.sampled) > 0, `rare branch captured: ${branch}`,
+        `${row.n} invocations, ${row.sampled ?? 0} sampled`);
     }
 
     // --- pinned-clock replay -------------------------------------------------
     // Four procedures branch on wall-clock time. Replaying a captured invocation with
     // the recorded clock must reproduce the captured result, or the oracle is worthless.
     section('Pinned-clock replay');
-    await replayCheck(pool);
+    await replayCheck(pool, apiPort);
 
     // --- determinism ---------------------------------------------------------
     section('Determinism (hard rule 5)');
@@ -309,68 +333,118 @@ function firstDifference(a: Fingerprint, b: Fingerprint): string {
 }
 
 /**
- * Replay a captured sp_CalculateOrderTotal invocation with its recorded clock and check
- * the result hash matches. GETDATE() cannot be overridden inside T-SQL, so the pin here
- * is the captured ambient clock being close enough that every time-dependent branch —
- * promo validity windows, which are days wide — evaluates the same way. The check proves
- * the recorded context is sufficient to reproduce the captured behaviour, which is what
- * M5's shadow harness will rely on.
+ * Replay a captured sp_CalculateOrderTotal invocation and check that it reproduces the
+ * captured result exactly.
+ *
+ * The result being compared is the MONEY THE PROCEDURE WROTE, not its result set.
+ * sp_CalculateOrderTotal contains no SELECT — it reads into variables and updates
+ * OrderLedger — so its result set is always empty and its ResultSetHash is one constant
+ * across every invocation (measured: 1 distinct hash across 2 363 rows). An assertion
+ * against that hash is true by construction and cannot fail, which is worse than no
+ * assertion at all. The written TotalNet / TotalVat / TotalWithVat / DiscountAmount are
+ * the actual output, and they are what M5 will diff.
+ *
+ * GETDATE() cannot be overridden inside T-SQL without editing the estate, so "pinned
+ * clock" here means: the recorded ambient clock is asserted to select the same side of
+ * every time-dependent branch as the replay clock does — promo windows are days wide —
+ * and under that condition the captured money is reproduced to the cent. The pin becomes
+ * literal at M6, where the replacement service takes an injected clock.
  */
-async function replayCheck(pool: sql.ConnectionPool): Promise<void> {
-  const rows = (await pool.request().query(`
-    SELECT TOP 1 InvocationID, InputParams, ResultSetHash, Context
-    FROM parity_capture.Invocation
-    WHERE ProcName = 'sp_CalculateOrderTotal' AND ResultSetHash IS NOT NULL AND Context IS NOT NULL
-    ORDER BY InvocationID DESC`)).recordset as { InvocationID: number; InputParams: string; ResultSetHash: string; Context: string }[];
+async function replayCheck(pool: sql.ConnectionPool, apiPort: string | number): Promise<void> {
+  const MONEY = ['TotalNet', 'TotalVat', 'TotalWithVat', 'DiscountAmount'];
 
-  if (rows.length === 0) {
-    check(false, 'a captured sp_CalculateOrderTotal invocation is available to replay');
+  // Capture and replay back to back against identical state. Reusing an older captured
+  // invocation would be unsound: later traffic may have applied a promo to the same
+  // order, so a difference would mean nothing.
+  const fixture = (await pool.request().query(`
+    SELECT TOP 1 o.OrderNumber
+    FROM dbo.OrderLedger o JOIN dbo.Customer c ON c.CustomerID = o.CustomerID
+    WHERE c.LoyaltyTier >= 3 AND o.CustomerCountryCode = 'CZ' AND o.TotalNet > 2500
+    GROUP BY o.OrderNumber ORDER BY o.OrderNumber`)).recordset[0] as { OrderNumber: string } | undefined;
+
+  if (!fixture) {
+    check(false, 'a fixture order exists for the replay check');
     return;
   }
 
-  const row = rows[0];
-  const params = JSON.parse(row.InputParams) as Record<string, unknown>;
-  const context = JSON.parse(row.Context) as { getdate: string };
+  // VERNY20 stacks with loyalty — the branch that carries the planted promo/VAT defect,
+  // and the one whose behaviour depends on the clock.
+  await fetch(`http://127.0.0.1:${apiPort}/api/orders/${fixture.OrderNumber}/total`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-parity-caller': 'verify:replay' },
+    body: JSON.stringify({ promoCode: 'VERNY20' }),
+    signal: AbortSignal.timeout(30_000),
+  });
+  await fetch(`http://127.0.0.1:${apiPort}/api/_capture/flush`, { method: 'POST', signal: AbortSignal.timeout(30_000) });
 
-  // Replay inside a transaction that always rolls back — the same shape M5 generalises.
+  const captured = (await pool.request().query(`
+    SELECT TOP 1 InvocationID, InputParams, WriteSet, Context
+    FROM parity_capture.Invocation
+    WHERE ProcName = 'sp_CalculateOrderTotal' AND CallerContext = 'verify:replay' AND WriteSet IS NOT NULL
+    ORDER BY InvocationID DESC`)).recordset[0] as
+    { InvocationID: number; InputParams: string; WriteSet: string; Context: string } | undefined;
+
+  if (!captured) {
+    check(false, 'the replay probe was captured with a write set');
+    return;
+  }
+
+  const context = JSON.parse(captured.Context) as { getdate: string };
+  const writeSet = JSON.parse(captured.WriteSet) as Record<string, { pk: Record<string, unknown>; columns: { column: string; after: unknown }[] }[]>;
+
+  const capturedMoney = new Map<string, Record<string, string>>();
+  for (const row of writeSet.OrderLedger ?? []) {
+    const money: Record<string, string> = {};
+    for (const c of row.columns) if (MONEY.includes(c.column)) money[c.column] = String(c.after);
+    if (Object.keys(money).length > 0) capturedMoney.set(String(row.pk.OrderLineID), money);
+  }
+  check(capturedMoney.size > 0, 'the captured write set contains the order totals it computed',
+    `${capturedMoney.size} line rows`);
+
   const tx = pool.transaction();
   await tx.begin();
   try {
-    const request = tx.request();
-    request.input('OrderNumber', sql.NVarChar(20), params.OrderNumber as string);
-    request.input('PromoCode', sql.NVarChar(40), (params.PromoCode as string) ?? null);
-    request.input('ModifiedBy', sql.NVarChar(60), 'replay');
-    const result = await request.execute('sp_CalculateOrderTotal');
-
-    // The pin is only meaningful if the recorded clock and the replay clock select the
-    // same side of every time-dependent branch. Promo windows are days wide, so this
-    // holds — but assert it rather than assume it, because it is exactly what stops
-    // being true if the demo runs after a promo expires.
-    const atRecorded = (await tx.request()
-      .input('code', sql.NVarChar(40), (params.PromoCode as string) ?? null)
+    // Same time-dependent regime? This is the precondition the pin rests on, and it is
+    // exactly what stops holding if the demo runs after VERNY20 expires (2026-12-31).
+    const regime = (await tx.request()
       .input('pinned', sql.DateTime2, new Date(context.getdate))
-      .query(`SELECT COUNT(*) AS n FROM dbo.PromoCode
-              WHERE @code IS NOT NULL AND Code = @code AND @pinned BETWEEN ValidFrom AND ValidTo`)).recordset[0] as { n: number };
-
-    const atNow = (await tx.request()
-      .input('code', sql.NVarChar(40), (params.PromoCode as string) ?? null)
-      .query(`SELECT COUNT(*) AS n FROM dbo.PromoCode
-              WHERE @code IS NOT NULL AND Code = @code AND GETDATE() BETWEEN ValidFrom AND ValidTo`)).recordset[0] as { n: number };
-
-    check(
-      Number(atRecorded.n) === Number(atNow.n),
+      .query(`SELECT
+                SUM(CASE WHEN @pinned  BETWEEN ValidFrom AND ValidTo THEN 1 ELSE 0 END) AS atPinned,
+                SUM(CASE WHEN GETDATE() BETWEEN ValidFrom AND ValidTo THEN 1 ELSE 0 END) AS atNow
+              FROM dbo.PromoCode WHERE Code = 'VERNY20'`)).recordset[0] as { atPinned: number; atNow: number };
+    check(Number(regime.atPinned) === Number(regime.atNow),
       'replay lands in the same promo-validity regime as the capture',
-      `pinned clock ${context.getdate.slice(0, 10)}`,
-    );
+      `recorded clock ${context.getdate.slice(0, 10)}, VERNY20 valid=${Number(regime.atNow) > 0}`);
 
-    // The real assertion: the replayed result is byte-identical to what was captured.
-    const replayHash = createHash('sha256').update(canonicalise(result.recordsets ?? [])).digest('hex');
+    const request = tx.request();
+    request.input('OrderNumber', sql.NVarChar(20), fixture.OrderNumber);
+    request.input('PromoCode', sql.NVarChar(40), 'VERNY20');
+    request.input('ModifiedBy', sql.NVarChar(60), 'replay');
+    await request.execute('sp_CalculateOrderTotal');
+
+    const replayed = (await tx.request()
+      .input('o', sql.NVarChar(20), fixture.OrderNumber)
+      .query(`SELECT OrderLineID, ${MONEY.join(', ')} FROM dbo.OrderLedger WHERE OrderNumber = @o`))
+      .recordset as Record<string, unknown>[];
+
+    const mismatches: string[] = [];
+    for (const row of replayed) {
+      const expected = capturedMoney.get(String(row.OrderLineID));
+      if (!expected) continue;
+      for (const col of MONEY) {
+        if (expected[col] === undefined) continue;
+        if (String(row[col]) !== expected[col]) {
+          mismatches.push(`line ${String(row.OrderLineID)} ${col}: captured ${expected[col]} vs replay ${String(row[col])}`);
+        }
+      }
+    }
+
     check(
-      replayHash === row.ResultSetHash,
-      'pinned-clock replay reproduces the captured result exactly',
-      replayHash === row.ResultSetHash
-        ? `invocation #${row.InvocationID}`
-        : `#${row.InvocationID}: captured ${row.ResultSetHash.slice(0, 12)} vs replay ${replayHash.slice(0, 12)}`,
+      mismatches.length === 0,
+      'pinned-clock replay reproduces the captured money exactly',
+      mismatches.length === 0
+        ? `invocation #${captured.InvocationID}, ${capturedMoney.size} line rows compared to the cent`
+        : mismatches.slice(0, 2).join('; '),
     );
   } finally {
     await tx.rollback();

@@ -13,7 +13,7 @@
     "sp_SearchProducts": 13200,
     "sp_SyncWarehouseDispatch": 50
   },
-  "branchKeys": 31,
+  "branchKeys": 66,
   "rareBranches": {
     "forty-lines": 1,
     "leap-day": 3,

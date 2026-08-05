@@ -40,7 +40,11 @@ const seenBranches = new Set<string>();
  * key always captures, which is what "always on uncovered branches" reduces to without
  * a T-SQL profiler.
  */
-export function branchKey(procName: string, params: Record<string, unknown>): string {
+export function branchKey(
+  procName: string,
+  params: Record<string, unknown>,
+  facts?: Map<number, { countryCode: string; loyaltyTier: number }>,
+): string {
   const get = (...names: string[]): unknown => {
     for (const n of names) {
       const hit = Object.keys(params).find((k) => k.toLowerCase() === n.toLowerCase());
@@ -60,8 +64,17 @@ export function branchKey(procName: string, params: Record<string, unknown>): st
   const promo = get('PromoCode', 'p_Code');
   parts.push(`promo=${promo ? String(promo) : 'none'}`);
 
-  const country = get('ShipCountry', 'BillCountry');
+  // Country and loyalty tier select the VAT branch and the loyalty-discount branch, but
+  // sp_CalculateOrderTotal and sp_GetCartSummary look them up inside themselves rather
+  // than taking them as parameters. Resolve them here or those branches never register
+  // as uncovered — see capture/facts.ts.
+  const explicitCountry = get('ShipCountry', 'BillCountry');
+  const customerId = Number(get('CustomerID', 'p_CustomerID', 'iCustomerId') ?? NaN);
+  const resolved = Number.isFinite(customerId) ? facts?.get(customerId) : undefined;
+
+  const country = explicitCountry ?? resolved?.countryCode;
   if (country) parts.push(`country=${String(country)}`);
+  if (resolved) parts.push(`tier=${resolved.loyaltyTier >= 3 ? 'loyal' : String(resolved.loyaltyTier)}`);
 
   const sort = get('sortMode');
   if (sort) parts.push(`sort=${String(sort)}`);
@@ -81,8 +94,12 @@ export interface SampleDecision {
   reason: 'warmup' | 'interval' | 'new-branch' | 'skip';
 }
 
-export function decide(procName: string, params: Record<string, unknown>): SampleDecision {
-  const key = branchKey(procName, params);
+export function decide(
+  procName: string,
+  params: Record<string, unknown>,
+  facts?: Map<number, { countryCode: string; loyaltyTier: number }>,
+): SampleDecision {
+  const key = branchKey(procName, params, facts);
   const seen = (seenCalls.get(procName) ?? 0) + 1;
   seenCalls.set(procName, seen);
 

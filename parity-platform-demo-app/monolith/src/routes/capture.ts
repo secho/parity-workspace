@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { flush, stats, samplerStats, resetSampler, resetWriteSetCache } from '../capture/index.js';
+import { flush, stats, samplerStats, resetSampler, resetWriteSetCache, resetCustomerFacts } from '../capture/index.js';
 
 /**
  * Capture control surface. Not business logic — this is the traffic generator's and
@@ -29,6 +29,7 @@ export default async function captureRoutes(app: FastifyInstance): Promise<void>
     await flush();
     resetSampler();
     resetWriteSetCache();
+    resetCustomerFacts();
     return { reset: true };
   });
 }
