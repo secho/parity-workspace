@@ -35,22 +35,27 @@ export interface PlannedCall {
  * for that, the captured share of availability+search lands at ~70%:
  *   (0.34 + 0.12 + 0.32) / 1.12 = 0.696
  *
- * The write shares are set by the time budget rather than by taste. Writes run in a
- * single serial lane (see the driver), so they dominate wall-clock: ~40 ms each measured.
- * sp_CalculateOrderTotal gets the largest write share because M5 must replay 2 000+
- * captured calls of it, and its sampling policy captures every call up to 3 000.
+ * The write shares are set by the time budget, not by taste. Writes run in a single
+ * serial lane (see the driver) and dominate wall-clock at ~47 ms each measured, so they
+ * alone decide whether the run fits SPEC's ~3 minutes. A first pass at 6 175 writes took
+ * 299 s; these shares put it near 3 400.
+ *
+ * sp_CalculateOrderTotal keeps by far the largest write share and is close to
+ * irreducible: M5 must replay 2 000+ *captured* calls of it, roughly 88% of calls yield a
+ * non-empty write set, so ~2 300 calls at ~45 ms is ~105 s of the budget on its own.
+ * Everything else is trimmed around that.
  */
 const WEIGHTS: Record<string, number> = {
-  sp_GetProductAvailability: 0.34,
-  sp_SearchProducts: 0.32,
-  sp_GetProductDetail: 0.12,
-  sp_GetCartSummary: 0.07,
-  sp_CalculateOrderTotal: 0.06,   // ~2 400 calls, all captured — M5's precondition
-  sp_PlaceOrder: 0.045,
-  sp_ApplyPromoCode: 0.0225,
-  sp_ReserveStock: 0.0225,
-  sp_SyncWarehouseDispatch: 0.0015,
-  sp_RecalculateCustomerScore: 0.0015,
+  sp_GetProductAvailability: 0.36,
+  sp_SearchProducts: 0.33,
+  sp_GetProductDetail: 0.13,
+  sp_GetCartSummary: 0.0945,
+  sp_CalculateOrderTotal: 0.058,  // ~2 320 calls, all captured — M5's precondition
+  sp_PlaceOrder: 0.010,
+  sp_ApplyPromoCode: 0.0075,
+  sp_ReserveStock: 0.0075,
+  sp_SyncWarehouseDispatch: 0.00125,
+  sp_RecalculateCustomerScore: 0.00125,
 };
 
 /** Cold, not dead — SPEC says ~4 calls in 90 days. It is the judgement case in triage. */

@@ -130,7 +130,11 @@ async function main(): Promise<void> {
              CASE WHEN t.temporal_type = 2 THEN 1 ELSE 0 END AS temporal
       FROM sys.tables t
       LEFT JOIN sys.change_tracking_tables ct ON ct.object_id = t.object_id
-      WHERE SCHEMA_NAME(t.schema_id) = 'dbo' AND t.temporal_type <> 1`);
+      WHERE SCHEMA_NAME(t.schema_id) = 'dbo'
+        AND t.temporal_type <> 1
+        -- SQL Server creates MSchange_tracking_history in dbo the first time change
+        -- tracking auto-cleanup runs, so it only appears once traffic has been generated.
+        AND t.name NOT LIKE 'MSchange_tracking%'`);
     check(tracked.length === 12, 'twelve tracked tables', `${tracked.length}`);
     check(tracked.every((t) => Number(t.ct) === 1), 'change tracking on every table',
       tracked.filter((t) => !Number(t.ct)).map((t) => t.name).join(', ') || 'all');

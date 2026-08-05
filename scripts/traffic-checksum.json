@@ -1,0 +1,25 @@
+{
+  "totalInvocations": 45287,
+  "perProcedure": {
+    "sp_ApplyPromoCode": 300,
+    "sp_CalculateOrderTotal": 2363,
+    "sp_GetCartSummary": 3784,
+    "sp_GetProductAvailability": 19600,
+    "sp_GetProductDetail": 5200,
+    "sp_LegacyPriceImport_v2": 4,
+    "sp_PlaceOrder": 436,
+    "sp_RecalculateCustomerScore": 50,
+    "sp_ReserveStock": 300,
+    "sp_SearchProducts": 13200,
+    "sp_SyncWarehouseDispatch": 50
+  },
+  "branchKeys": 31,
+  "rareBranches": {
+    "forty-lines": 1,
+    "leap-day": 3,
+    "negative-stock": 3,
+    "slovak-vat": 8,
+    "stacked-promo": 40
+  },
+  "distinctDays": 90
+}

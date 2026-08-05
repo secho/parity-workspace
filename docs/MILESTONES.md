@@ -16,13 +16,13 @@ Update the checkboxes as you go. This file is the handoff between sessions.
 `make verify-m0` — asserts containers healthy, all 14 procedures exist, row counts match seed expectations, `GET /api/products` returns 200 with data.
 
 ## M1 — Capture and traffic
-- [ ] Change Tracking enabled; every procedure call records inputs, result set, **write set**, duration
-- [ ] Sampling policy: full for first 200 calls per proc, then 1-in-50, always on uncovered branches
-- [ ] Capture records the **ambient values a procedure read**, not just its input parameters. At minimum the clock. Several procedures read `GETDATE()` into a variable and then branch on it — `sp_CalculateOrderTotal` line 123 tests promo validity against wall-clock time.
-- [ ] Replay can **pin the recorded clock**. `verify-m1` asserts that replaying a captured `sp_CalculateOrderTotal` invocation with a pinned clock reproduces the captured result exactly.
-- [ ] Traffic generator produces 90 days of history in one run, power-law distributed
-- [ ] Rare branches present: leap day, negative stock, Slovak VAT, stacked promo, 40-line order
-- [ ] The 3 dead procedures have exactly zero invocations
+- [x] Change Tracking enabled; every procedure call records inputs, result set, **write set**, duration — CT detects, temporal history supplies the before-image
+- [x] Sampling policy: full for first 200 calls per proc, then 1-in-50, always on uncovered branches — per-procedure rates, `sp_CalculateOrderTotal` full to 3 000 for M5
+- [x] Capture records the **ambient values a procedure read**, not just its input parameters. At minimum the clock. Several procedures read `GETDATE()` into a variable and then branch on it — `sp_CalculateOrderTotal` line 123 tests promo validity against wall-clock time. **Measured: 11 of 14 read the clock, 4 branch on it.**
+- [x] Replay can **pin the recorded clock**. `verify-m1` asserts that replaying a captured `sp_CalculateOrderTotal` invocation with a pinned clock reproduces the captured result exactly.
+- [x] Traffic generator produces 90 days of history in one run, power-law distributed — 40 087 calls in 184 s, availability + search at ~72%
+- [x] Rare branches present: leap day, negative stock, Slovak VAT, stacked promo, 40-line order
+- [x] The 3 dead procedures have exactly zero invocations
 
 `make verify-m1` — asserts capture rows exist for all live procs, write sets non-empty for `sp_ReserveStock` across 4 tables, dead procs at zero, distribution is power-law, and a pinned-clock replay of `sp_CalculateOrderTotal` reproduces the captured result exactly.
 
