@@ -125,8 +125,10 @@ services:
       MSSQL_HOST: mssql
       MSSQL_PORT: "1433"
       MSSQL_DATABASE: ParityShop
-      MSSQL_USER: sa
-      MSSQL_SA_PASSWORD: "${MSSQL_SA_PASSWORD}"
+      # db_datareader + VIEW DEFINITION, created by db/40-parity-reader.sql. Parity
+      # cannot write to the estate it analyses — a permission grant rather than a promise.
+      MSSQL_USER: "${PARITY_READER_USER:-parity_reader}"
+      MSSQL_SA_PASSWORD: "${PARITY_READER_PASSWORD:-Parity_Reader_2026!}"
       PORT: "3000"
       PARITY_MODE: "${PARITY_MODE:-live}"
     ports:

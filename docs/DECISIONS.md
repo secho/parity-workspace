@@ -205,3 +205,66 @@ ingest would pass that check and still drift. `verify-m2` also flips one procedu
 then restores. The same probe proves coverage is invocation-weighted rather than counted:
 flipping `sp_GetProductDetail` moves coverage to 11,48%, its real share of traffic, where a
 per-procedure count would have said 7,14%.
+
+## 2026-08-05 · Parity connects to ParityShop as `parity_reader`, not as `sa`
+Raised by the reviewer: three places described the link as a "read-only connection" while
+the credential was unrestricted. The whole separation argument — Parity could be pointed at
+Alza's real estate tomorrow — rests on what Parity is *allowed* to do, and "it only reads"
+is a much weaker answer than "it cannot write". `db/40-parity-reader.sql` creates a login
+with `db_datareader` and nothing else, and `verify-m2` asserts all three halves: the login
+can read the estate, it can read procedure source, and the engine refuses its UPDATE.
+
+`GRANT VIEW DEFINITION` is the part that is easy to miss. `db_datareader` can read every
+table in the database and still gets NULL back from `sys.sql_modules.definition`, which is
+the one column the entire ingest is built on. Without it Parity ingests fourteen procedures
+with empty source and the failure presents as a parser bug.
+
+## 2026-08-05 · Four reviewer findings in the parser and the gate, all real
+Caught before the PR merged, and all four were the same class of defect: something that
+looks right and is silently wrong.
+
+**`reads[]` over-reported by ~76 columns.** The write-target ranges that keep a SET target
+from also being scanned as a read were computed with `assignment.indexOf(lhs)`, and `lhs` is
+a *prefix* of `assignment` — so that is always 0 and every range collapsed onto the first
+assignment. `sp_CalculateOrderTotal` listed 15 of its own 17 written columns as reads. The
+offset now comes from the split. Writes were never affected, so the coupling graph was right
+throughout; the Data tab was not.
+
+**Dynamic SQL dropped the fragments that mattered.** Literals were filtered individually for
+"names a real table", but `sp_SearchProducts` assembles its query from pieces —
+`FROM dbo.Catalog c` in one literal, `WHERE c.IsActive = 1` and `ORDER BY c.CreatedAt DESC`
+in others that never mention a table. Exactly those were discarded. All literals are now
+joined so an alias bound by one fragment resolves the columns named in the rest; recovery on
+the estate's second-hottest procedure went from 21 columns to 24, including the filter and
+sort columns that every single call uses. `SELECT *` is widened too, which
+`sp_MigrateCustomerAddresses` needs.
+
+**A gate assertion that could not fail.** "Every written column has exactly one write_owner"
+was `HAVING COUNT(*) > 1` over the owned rows — vacuously true if the feature regressed and
+nothing was owned at all. The same shape as M1's replay assertion. It now also asserts that
+the number of owned columns equals the number of distinct written columns: 124 of 124.
+
+**The CT-residue rule measured the wrong thing.** It counted row-column pairs inside a write
+set, not captures, so a single contaminated capture touching two rows would have failed the
+build while a genuine one-row parser gap passed. Now counted per capture. A clean
+`make seed && make traffic` also took the known residue to 0 of 3056, which confirms the
+diagnosis that it came from `verify-m0`'s probe running concurrently with traffic.
+
+## 2026-08-05 · verify-m2 restores its own probe in `finally`
+The blocker and coverage checks mutate `sp_GetProductDetail` in Parity's Postgres and put it
+back. The restore was a plain statement, so a throw in between — a fetch timeout is the
+realistic one — would have left the estate at 11,48% coverage with a `chybí shadow run`
+blocker: the wrong picture for beat 1, and a confusing one to debug because the gate that
+caused it had already exited. A gate must not be able to damage the thing it measures.
+
+## 2026-08-05 · `make verify-m0` only passes against a pristine seed, and that is not a bug
+Re-running the M0 gate after M2's seed change reported 5 436 orders against an expected
+5 000 and a drifted seed checksum. Neither is caused by the change: `make traffic` places
+real orders through `sp_PlaceOrder`, so the estate legitimately holds more rows afterwards.
+M0's own DECISIONS entry already records that using the shop mutates the estate. verify-m0
+reseeds on the way out, so running it a second time immediately gives 36/36.
+
+Worth stating plainly because it will happen again on every milestone: the gates are not
+independent, and the order is `seed → verify-m0 → traffic → verify-m1 → demo-reset →
+verify-m2`. Running verify-m0 in the middle of that sequence destroys the capture data the
+later two depend on.

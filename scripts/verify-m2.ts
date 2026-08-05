@@ -24,6 +24,9 @@ const LIVE_PROCEDURES = [
 ];
 const DEAD_PROCEDURES = ['sp_ExportCatalogXml_OLD', 'sp_MigrateCustomerAddresses', 'sp_RecomputeLoyaltyTier_deprecated'];
 
+/** The blocker and coverage probes mutate this row and must always put it back. */
+const PROBE_PROCEDURE = 'sp_GetProductDetail';
+
 let failures = 0;
 let checks = 0;
 
@@ -103,6 +106,41 @@ async function main(): Promise<void> {
 
     const estate = await getJson<EstateResponse>('/api/estate');
     check(estate.procedures.length > 0, 'GET /api/estate returns data');
+
+    // "Parity only reads the estate" is the claim the whole separation argument rests on.
+    // Assert it as a permission, not as a promise: connect with the credentials the API
+    // actually uses and confirm the engine refuses a write.
+    const readerPool = await new mssql.ConnectionPool({
+      server: process.env.MSSQL_HOST ?? '127.0.0.1',
+      port: Number(process.env.MSSQL_PORT ?? 1433),
+      database: 'ParityShop',
+      user: process.env.PARITY_READER_USER ?? 'parity_reader',
+      password: process.env.PARITY_READER_PASSWORD ?? 'Parity_Reader_2026!',
+      options: { encrypt: true, trustServerCertificate: true, requestTimeout: 30_000 },
+    }).connect();
+    try {
+      const [readable] = (await readerPool.request().query('SELECT COUNT(*) AS n FROM dbo.Catalog')).recordset as { n: number }[];
+      check(Number(readable.n) > 0, "Parity's login can read the estate", `${readable.n} products`);
+
+      const [module] = (
+        await readerPool.request().query(`
+          SELECT LEN(m.definition) AS n FROM sys.sql_modules m
+          JOIN sys.objects o ON o.object_id = m.object_id WHERE o.name = 'sp_CalculateOrderTotal'`)
+      ).recordset as { n: number | null }[];
+      // db_datareader alone returns NULL here; it takes VIEW DEFINITION, and without it
+      // the ingest silently stores fourteen procedures with empty source.
+      check((module?.n ?? 0) > 0, "Parity's login can read procedure source", `${module?.n ?? 0} chars`);
+
+      let refused = false;
+      try {
+        await readerPool.request().query('UPDATE dbo.Catalog SET StockQty = StockQty WHERE ProductID = 1');
+      } catch (err) {
+        refused = err instanceof Error && /permission was denied/i.test(err.message);
+      }
+      check(refused, 'Parity cannot write to the estate it analyses');
+    } finally {
+      await readerPool.close();
+    }
 
     // --- 2. every procedure ingested with its source ------------------------------
     section('Estate ingested from MS SQL');
@@ -206,17 +244,20 @@ async function main(): Promise<void> {
     ).recordset as { name: string; ws: string }[];
     check(captured.length > 0, 'captured write sets are available to grade against', `${captured.length} sampled calls`);
 
+    // Counted per CAPTURE, not per row-column. A write set covering three rows names the
+    // same column three times, and the residue rule below turns on "observed in more than
+    // one capture" — conflating the two would fail a single contaminated capture that
+    // happened to touch two rows, and wave through a genuine parser gap seen once.
     const observed = new Map<string, Map<string, number>>();
     for (const row of captured) {
       const parsedWs = JSON.parse(row.ws) as Record<string, { columns: { column: string }[] }[]>;
       const counts = observed.get(row.name) ?? new Map<string, number>();
+      const inThisCapture = new Set<string>();
       for (const [table, rows] of Object.entries(parsedWs)) {
         const shortTable = table.split('.').pop()!;
-        for (const r of rows) for (const c of r.columns) {
-          const key = `${shortTable}.${c.column}`;
-          counts.set(key, (counts.get(key) ?? 0) + 1);
-        }
+        for (const r of rows) for (const c of r.columns) inThisCapture.add(`${shortTable}.${c.column}`);
       }
+      for (const key of inThisCapture) counts.set(key, (counts.get(key) ?? 0) + 1);
       observed.set(row.name, counts);
     }
 
@@ -288,13 +329,26 @@ async function main(): Promise<void> {
       'dead sp_MigrateCustomerAddresses ↔ hot sp_PlaceOrder on OrderLedger',
     );
 
-    const { rows: ownerRows } = await client.query<{ n: number }>(
-      `SELECT COUNT(*)::int AS n FROM (
-         SELECT table_name, column_name FROM procedure_columns
-         WHERE access = 'write' AND is_write_owner GROUP BY table_name, column_name
-         HAVING COUNT(*) > 1) s`,
+    // Both halves matter. "No column has two owners" passes trivially if the feature
+    // regressed and nothing is owned at all — the same shape as M1's assertion that
+    // compared a constant to itself. So assert the count of owned columns equals the
+    // count of distinct written columns as well.
+    const { rows: ownerRows } = await client.query<{ contested: number; owned: number; written: number }>(`
+      SELECT
+        (SELECT COUNT(*)::int FROM (
+           SELECT table_name, column_name FROM procedure_columns
+           WHERE access = 'write' AND is_write_owner
+           GROUP BY table_name, column_name HAVING COUNT(*) > 1) s) AS contested,
+        (SELECT COUNT(DISTINCT (table_name, column_name))::int FROM procedure_columns
+           WHERE access = 'write' AND is_write_owner) AS owned,
+        (SELECT COUNT(DISTINCT (table_name, column_name))::int FROM procedure_columns
+           WHERE access = 'write') AS written`);
+    check(ownerRows[0].contested === 0, 'no written column has two write_owners', `${ownerRows[0].contested} contested`);
+    check(
+      ownerRows[0].owned === ownerRows[0].written && ownerRows[0].written > 0,
+      'every written column has a write_owner',
+      `${ownerRows[0].owned} owned of ${ownerRows[0].written} written`,
     );
-    check(ownerRows[0].n === 0, 'every written column has exactly one write_owner', `${ownerRows[0].n} contested`);
 
     // sp_SearchProducts is built entirely from dynamic SQL. Reporting it as touching
     // nothing would be a lie about ~29% of all traffic.
@@ -320,7 +374,7 @@ async function main(): Promise<void> {
     );
 
     // Storage is only half of it: prove the value actually moves when its inputs move.
-    const probeName = 'sp_GetProductDetail';
+    const probeName = PROBE_PROCEDURE;
     const before = (await getJson<EstateResponse>('/api/estate')).procedures.find((p) => p.name === probeName);
     await client.query('UPDATE procedures SET oracle_class = $1, oracle_state = $2 WHERE name = $3', [
       'pure_read',
@@ -381,6 +435,13 @@ async function main(): Promise<void> {
       afterReset.blockers.map((b) => `${b.label}=${b.procedures}`).join(', '),
     );
   } finally {
+    // The blocker and coverage probes write into Parity's own state. A throw between the
+    // mutation and the restore — a fetch timeout is the realistic one — would otherwise
+    // leave the estate at 11,48% coverage with a `chybí shadow run` blocker, which is the
+    // wrong picture for beat 1 and a confusing one to debug. Always put it back.
+    await client
+      .query(`UPDATE procedures SET oracle_class = NULL, oracle_state = 'none' WHERE name = $1`, [PROBE_PROCEDURE])
+      .catch(() => undefined);
     await sqlPool.close();
     await client.end();
   }

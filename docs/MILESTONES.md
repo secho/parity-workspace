@@ -33,10 +33,11 @@ Update the checkboxes as you go. This file is the handoff between sessions.
 - [x] The parse is **graded against M1's captured write sets**: every column the estate was observed to write must appear in it. Text parsing recovers the `UPDATE … FROM #temp` statements `sys.dm_sql_referenced_entities` silently drops.
 - [x] `sp_SearchProducts` is entirely dynamic SQL; its reads are parsed out of the string literals and flagged `inferred` rather than reported as nothing
 - [x] `blocker` is a **derived property**, never stored — asserted twice: no such column exists, and the value moves when `oracle_state` moves
+- [x] Parity connects as `parity_reader` (`db_datareader` + `VIEW DEFINITION`), so "it cannot write to the estate" is a permission the gate asserts, not a promise
 - [x] Estate screen live: totals, invocation-weighted coverage, status bar, blocker breakdown, sortable table
-- [x] `make demo-reset` in 0.9 s, back to 14 procedures / coverage 0 / everything `untouched`
+- [x] `make demo-reset` in 1.4 s, back to 14 procedures / coverage 0 / everything `untouched`
 
-`make verify-m2` — 31 checks. Asserts 14 procedures ingested with source and matching line counts, per-procedure invocation counts equal a live `COUNT(*)`, every observed write is covered by the parse, the coupling graph contains the two designed collisions, coverage is weighted not counted, ingest is deterministic across two runs, and `demo-reset` returns the estate to its pre-demo state under 120 s.
+`make verify-m2` — 35 checks. Asserts Parity's login can read the estate and its procedure source but is refused a write, 14 procedures ingested with matching line counts, per-procedure invocation counts equal a live `COUNT(*)`, every observed write is covered by the parse, the coupling graph contains the two designed collisions, every written column has exactly one owner, coverage is weighted not counted, ingest is deterministic across two runs, and `demo-reset` returns the estate to its pre-demo state under 120 s.
 
 ## M3 — Agent, skills, spec
 - [ ] Agent SDK wired, `ANTHROPIC_API_KEY`, `settingSources: ['project']`

@@ -166,22 +166,31 @@ function nextAtDepthZero(code: string, depths: Int32Array, from: number, pattern
   return code.length;
 }
 
+interface Part {
+  text: string;
+  /** Offset of this part within the fragment, so a SET target can be excluded from reads. */
+  start: number;
+}
+
 /** Split on commas that sit at the top level of the given fragment. */
-function splitTopLevel(fragment: string): string[] {
-  const parts: string[] = [];
+function splitTopLevel(fragment: string): Part[] {
+  const parts: Part[] = [];
   let depth = 0;
   let current = '';
-  for (const ch of fragment) {
+  let start = 0;
+  for (let i = 0; i < fragment.length; i++) {
+    const ch = fragment[i];
     if (ch === '(') depth++;
     else if (ch === ')') depth = Math.max(0, depth - 1);
     if (ch === ',' && depth === 0) {
-      parts.push(current);
+      parts.push({ text: current, start });
       current = '';
+      start = i + 1;
       continue;
     }
     current += ch;
   }
-  if (current.trim() !== '') parts.push(current);
+  if (current.trim() !== '') parts.push({ text: current, start });
   return parts;
 }
 
@@ -275,14 +284,17 @@ function extract(code: string, catalog: SqlCatalog, inferred: boolean): Extracti
     if (target === null) continue;
 
     for (const assignment of splitTopLevel(code.slice(assignFrom, setEnd))) {
-      const eq = assignment.indexOf('=');
+      const eq = assignment.text.indexOf('=');
       if (eq < 0) continue;
-      const lhs = assignment.slice(0, eq);
+      const lhs = assignment.text.slice(0, eq);
       const name = unbracket(lhs).trim().split('.').pop()?.trim() ?? '';
       const column = target.columns.get(name.toLowerCase());
       if (column === undefined) continue;
       addWrite(target, column, false);
-      const offset = assignFrom + assignment.indexOf(lhs);
+      // The offset has to come from the split, not from indexOf: `lhs` is a prefix of
+      // `assignment.text`, so indexOf would always return 0 and every SET target after
+      // the first would be scanned as a read of the column it writes.
+      const offset = assignFrom + assignment.start;
       writeTargetRanges.push([offset, offset + lhs.length]);
     }
   }
@@ -312,7 +324,7 @@ function extract(code: string, catalog: SqlCatalog, inferred: boolean): Extracti
         }
       }
       for (const raw of splitTopLevel(code.slice(open + 1, close))) {
-        const column = target.columns.get(unbracket(raw).trim().toLowerCase());
+        const column = target.columns.get(unbracket(raw.text).trim().toLowerCase());
         if (column !== undefined) addWrite(target, column, false);
       }
       writeTargetRanges.push([open, close + 1]);
@@ -354,6 +366,23 @@ function extract(code: string, catalog: SqlCatalog, inferred: boolean): Extracti
     reads.push({ table: table.name, column, inferred: inferred || aliases.ambiguous.has(alias) });
   }
 
+  // `SELECT *` reads every column of the tables in scope, and naming only the ones that
+  // happen to appear elsewhere in the body would under-report. sp_MigrateCustomerAddresses
+  // opens with `SELECT * FROM dbo.Customer`. Widened and flagged, same as a column-less
+  // INSERT: honest about the fact that the specific set cannot be read off the source.
+  const star = /\bSELECT\s+(?:TOP\s*\([^)]*\)\s*|TOP\s+\d+\s*|DISTINCT\s+)*(?:(\w+)\s*\.\s*)?\*/gi;
+  for (let m = star.exec(code); m !== null; m = star.exec(code)) {
+    // Scope to this statement's own FROM clause, not to every table the procedure
+    // touches — `SELECT * FROM dbo.Customer` says nothing about Catalog.
+    const scoped =
+      m[1] === undefined
+        ? [...new Set(aliasesIn(code.slice(m.index, nextAtDepthZero(code, depths, m.index + m[0].length, STATEMENT_HEADS)), catalog).entries.values())]
+        : [aliases.entries.get(m[1].toLowerCase())].filter((t): t is CatalogTable => t !== undefined);
+    for (const table of scoped) {
+      for (const column of table.columns.values()) reads.push({ table: table.name, column, inferred: true });
+    }
+  }
+
   // Bare column names, resolved against the tables this procedure actually references.
   // Ambiguous ones are attributed to every candidate and flagged rather than dropped.
   for (const table of referenced) {
@@ -373,10 +402,14 @@ function extract(code: string, catalog: SqlCatalog, inferred: boolean): Extracti
 
 // --- public entry point ------------------------------------------------------------
 
-/** A string literal is treated as SQL only if it names a real table and reads like a query. */
-function looksLikeSql(literal: string, catalog: SqlCatalog): boolean {
-  if (!/\b(SELECT|FROM|WHERE|INSERT|UPDATE|DELETE|ORDER\s+BY|JOIN)\b/i.test(literal)) return false;
-  return [...catalog.values()].some((t) => new RegExp(`\\b${t.name}\\b`, 'i').test(literal));
+/** Does this procedure build SQL as a string at all? One literal naming a real table and
+ *  reading like a query is enough to say yes. */
+function buildsSql(literals: string[], catalog: SqlCatalog): boolean {
+  return literals.some(
+    (literal) =>
+      /\b(SELECT|FROM|WHERE|INSERT|UPDATE|DELETE|ORDER\s+BY|JOIN)\b/i.test(literal) &&
+      [...catalog.values()].some((t) => new RegExp(`\\b${t.name}\\b`, 'i').test(literal)),
+  );
 }
 
 /**
@@ -397,12 +430,19 @@ export function parseProcedure(sourceSql: string, catalog: SqlCatalog): ParseRes
 
   // sp_SearchProducts is built entirely from dynamic SQL, so the statements that touch
   // Catalog live inside string literals. Blanking those and reporting "reads nothing"
-  // for ~36% of all traffic would be a lie on the main screen. The fragments are parsed
-  // too, and everything found that way is flagged inferred — the parser cannot prove
-  // which branches concatenate at runtime, and should not pretend otherwise.
-  const sqlLiterals = literals.filter((l) => looksLikeSql(l, catalog));
-  const usesDynamicSql = sqlLiterals.length > 0;
-  const dynamic = usesDynamicSql ? extract(sqlLiterals.join('\n'), catalog, true) : null;
+  // for the estate's second-hottest procedure would be a lie on the main screen. The
+  // fragments are parsed too, and everything found that way is flagged inferred — the
+  // parser cannot prove which branches concatenate at runtime, and should not pretend to.
+  //
+  // ALL literals are joined, not only the ones that name a table themselves. The query is
+  // assembled from pieces: `FROM dbo.Catalog c` lives in one literal while
+  // `WHERE c.IsActive = 1` and `ORDER BY c.CreatedAt DESC` live in others that never
+  // mention a table. Filtering per literal dropped exactly those, silently — which is the
+  // failure mode this parser exists to avoid. Joining lets the alias bound by one
+  // fragment resolve the columns named in the rest. Literals that are not SQL contribute
+  // nothing: they hold no qualified references and no table names.
+  const usesDynamicSql = buildsSql(literals, catalog);
+  const dynamic = usesDynamicSql ? extract(literals.join('\n'), catalog, true) : null;
 
   const reads = dedupe([...direct.reads, ...(dynamic?.reads ?? [])]);
   const writes = dedupe([...direct.writes, ...(dynamic?.writes ?? [])]);
