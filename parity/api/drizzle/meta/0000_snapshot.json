@@ -1,0 +1,415 @@
+{
+  "id": "3c8fad97-7dd4-4e5f-88c3-2b76fdbe61c2",
+  "prevId": "00000000-0000-0000-0000-000000000000",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.coupling_edges": {
+      "name": "coupling_edges",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "table_name": {
+          "name": "table_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "column_name": {
+          "name": "column_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "a_procedure_id": {
+          "name": "a_procedure_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "b_procedure_id": {
+          "name": "b_procedure_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "coupling_edges_a_procedure_id_procedures_id_fk": {
+          "name": "coupling_edges_a_procedure_id_procedures_id_fk",
+          "tableFrom": "coupling_edges",
+          "tableTo": "procedures",
+          "columnsFrom": [
+            "a_procedure_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "coupling_edges_b_procedure_id_procedures_id_fk": {
+          "name": "coupling_edges_b_procedure_id_procedures_id_fk",
+          "tableFrom": "coupling_edges",
+          "tableTo": "procedures",
+          "columnsFrom": [
+            "b_procedure_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "uq_coupling_edge": {
+          "name": "uq_coupling_edge",
+          "nullsNotDistinct": false,
+          "columns": [
+            "table_name",
+            "column_name",
+            "a_procedure_id",
+            "b_procedure_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.procedure_calls": {
+      "name": "procedure_calls",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "caller_id": {
+          "name": "caller_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "callee_id": {
+          "name": "callee_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "procedure_calls_caller_id_procedures_id_fk": {
+          "name": "procedure_calls_caller_id_procedures_id_fk",
+          "tableFrom": "procedure_calls",
+          "tableTo": "procedures",
+          "columnsFrom": [
+            "caller_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "procedure_calls_callee_id_procedures_id_fk": {
+          "name": "procedure_calls_callee_id_procedures_id_fk",
+          "tableFrom": "procedure_calls",
+          "tableTo": "procedures",
+          "columnsFrom": [
+            "callee_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "uq_procedure_call": {
+          "name": "uq_procedure_call",
+          "nullsNotDistinct": false,
+          "columns": [
+            "caller_id",
+            "callee_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.procedure_columns": {
+      "name": "procedure_columns",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "procedure_id": {
+          "name": "procedure_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "table_name": {
+          "name": "table_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "column_name": {
+          "name": "column_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "access": {
+          "name": "access",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "is_write_owner": {
+          "name": "is_write_owner",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "inferred": {
+          "name": "inferred",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        }
+      },
+      "indexes": {
+        "ix_procedure_columns_target": {
+          "name": "ix_procedure_columns_target",
+          "columns": [
+            {
+              "expression": "table_name",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "column_name",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "access",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "procedure_columns_procedure_id_procedures_id_fk": {
+          "name": "procedure_columns_procedure_id_procedures_id_fk",
+          "tableFrom": "procedure_columns",
+          "tableTo": "procedures",
+          "columnsFrom": [
+            "procedure_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "uq_procedure_column": {
+          "name": "uq_procedure_column",
+          "nullsNotDistinct": false,
+          "columns": [
+            "procedure_id",
+            "table_name",
+            "column_name",
+            "access"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.procedures": {
+      "name": "procedures",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "schema_name": {
+          "name": "schema_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_sql": {
+          "name": "source_sql",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "line_count": {
+          "name": "line_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "domain": {
+          "name": "domain",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "invocations_90d": {
+          "name": "invocations_90d",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "last_invoked_at": {
+          "name": "last_invoked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "oracle_class": {
+          "name": "oracle_class",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "oracle_state": {
+          "name": "oracle_state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'none'"
+        },
+        "campaign_status": {
+          "name": "campaign_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'untouched'"
+        },
+        "owner_team": {
+          "name": "owner_team",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "risk_class": {
+          "name": "risk_class",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "seam_requirements": {
+          "name": "seam_requirements",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "uses_dynamic_sql": {
+          "name": "uses_dynamic_sql",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "ingested_at": {
+          "name": "ingested_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "ix_procedures_invocations": {
+          "name": "ix_procedures_invocations",
+          "columns": [
+            {
+              "expression": "invocations_90d",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "procedures_name_unique": {
+          "name": "procedures_name_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "name"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

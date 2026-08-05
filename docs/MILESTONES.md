@@ -27,13 +27,17 @@ Update the checkboxes as you go. This file is the handoff between sessions.
 `make verify-m1` — asserts capture rows exist for all live procs, write sets non-empty for `sp_ReserveStock` across 4 tables, dead procs at zero, distribution is power-law, and a pinned-clock replay of `sp_CalculateOrderTotal` reproduces the captured result exactly.
 
 ## M2 — Estate ingestion
-- [ ] Parity app shell: sidebar, Postgres schema, Drizzle migrations
-- [ ] Ingest procedures from MS SQL: name, source, line count, invocation counts
-- [ ] Column-level `reads[]` / `writes[]` parsed from T-SQL; data-coupling graph built
-- [ ] `blocker` is a **derived property**, never stored
-- [ ] Estate screen live: totals, invocation-weighted coverage, status bar, blocker breakdown, sortable table
+- [x] Parity app shell: sidebar, Postgres schema, Drizzle migrations
+- [x] Ingest procedures from MS SQL: name, source, line count, invocation counts — 14 procedures, 45 287 invocations
+- [x] Column-level `reads[]` / `writes[]` parsed from T-SQL; data-coupling graph built — 562 column accesses, 121 edges, 51 columns written by 2+ procedures
+- [x] The parse is **graded against M1's captured write sets**: every column the estate was observed to write must appear in it. Text parsing recovers the `UPDATE … FROM #temp` statements `sys.dm_sql_referenced_entities` silently drops.
+- [x] `sp_SearchProducts` is entirely dynamic SQL; its reads are parsed out of the string literals and flagged `inferred` rather than reported as nothing
+- [x] `blocker` is a **derived property**, never stored — asserted twice: no such column exists, and the value moves when `oracle_state` moves
+- [x] Parity connects as `parity_reader` (`db_datareader` + `VIEW DEFINITION`), so "it cannot write to the estate" is a permission the gate asserts, not a promise
+- [x] Estate screen live: totals, invocation-weighted coverage, status bar, blocker breakdown, sortable table
+- [x] `make demo-reset` in 1.4 s, back to 14 procedures / coverage 0 / everything `untouched`
 
-`make verify-m2` — asserts 14 procedures ingested, coupling graph has cross-procedure column overlaps, blocker values are computed not persisted.
+`make verify-m2` — 35 checks. Asserts Parity's login can read the estate and its procedure source but is refused a write, 14 procedures ingested with matching line counts, per-procedure invocation counts equal a live `COUNT(*)`, every observed write is covered by the parse, the coupling graph contains the two designed collisions, every written column has exactly one owner, coverage is weighted not counted, ingest is deterministic across two runs, and `demo-reset` returns the estate to its pre-demo state under 120 s.
 
 ## M3 — Agent, skills, spec
 - [ ] Agent SDK wired, `ANTHROPIC_API_KEY`, `settingSources: ['project']`

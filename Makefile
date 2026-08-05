@@ -1,4 +1,4 @@
-.PHONY: up down seed seed-checksum traffic traffic-checksum demo-reset \
+.PHONY: up down seed seed-checksum traffic traffic-checksum ingest demo-reset \
         verify-m0 verify-m1 verify-m2 verify-m3 verify-m4 verify-m5 verify-m6 verify-m7
 
 # Waits only for the containers that must exist BEFORE seeding. shop-api's health
@@ -7,7 +7,7 @@
 up:
 	docker compose up --build -d
 	@echo "waiting for infrastructure..."
-	@for c in parityshop-mssql parityshop-mailpit; do \
+	@for c in parityshop-mssql parityshop-mailpit parity-postgres; do \
 		printf "  %s" $$c; \
 		until [ "$$(docker inspect -f '{{.State.Health.Status}}' $$c 2>/dev/null)" = "healthy" ]; do printf "."; sleep 2; done; \
 		echo " healthy"; \
@@ -34,8 +34,19 @@ traffic:
 	npm --prefix parity-platform-demo-app/traffic install --silent
 	npm --prefix parity-platform-demo-app/traffic run traffic
 
+# Re-read the estate. Refreshes estate facts — source, line counts, invocation counts,
+# the parse and the graphs built from it — without touching analysis.
+ingest:
+	docker compose exec -T parity-api npx tsx src/cli/ingest.ts
+
+# Back to the state beat 1 of the demo opens on: fourteen procedures listed with real
+# invocation counts, nothing analysed, coverage zero. SPEC §8 puts this at M2 rather than
+# M7 because it gets used more often than any other command.
+#
+# Runs inside the container so it needs no host-side env plumbing, and so it talks to the
+# same Postgres and the same ParityShop the API does.
 demo-reset:
-	@echo "TODO M2: full reset to pristine pre-demo state, under 120s"
+	docker compose exec -T parity-api npx tsx src/cli/reset.ts
 
 verify-m0:
 	npm --prefix scripts install --silent
@@ -51,7 +62,8 @@ traffic-checksum:
 	rm -f scripts/traffic-checksum.json
 	VERIFY_FAST=1 npm --prefix scripts run verify-m1
 verify-m2:
-	@echo "TODO M2 acceptance"; exit 1
+	npm --prefix scripts install --silent
+	npm --prefix scripts run verify-m2
 verify-m3:
 	@echo "TODO M3 acceptance"; exit 1
 verify-m4:
