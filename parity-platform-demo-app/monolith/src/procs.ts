@@ -1,4 +1,5 @@
 import { getPool, sql } from './db.js';
+import { withCapture } from './capture/index.js';
 
 /**
  * The single seam through which every stored-procedure call passes.
@@ -24,23 +25,30 @@ export async function callProcedure(
   name: string,
   params: Record<string, ProcParam> = {},
 ): Promise<ProcResult> {
-  const pool = await getPool();
-  const request = pool.request();
+  const plainValues = Object.fromEntries(Object.entries(params).map(([k, p]) => [k, p.value ?? null]));
 
-  for (const [key, param] of Object.entries(params)) {
-    request.input(key, param.type, param.value ?? null);
-  }
+  // M1 wraps the seam here. Capture decides sampling, owns the Change Tracking version
+  // window for the calls it records, and writes to parity_capture.Invocation. With
+  // PARITY_CAPTURE=off this is a straight passthrough and the monolith behaves as in M0.
+  return withCapture(name, plainValues, async () => {
+    const pool = await getPool();
+    const request = pool.request();
 
-  const started = Date.now();
-  const result = await request.execute(name);
+    for (const [key, param] of Object.entries(params)) {
+      request.input(key, param.type, param.value ?? null);
+    }
 
-  return {
-    recordsets: result.recordsets as sql.IRecordSet<Record<string, unknown>>[],
-    recordset: result.recordset as sql.IRecordSet<Record<string, unknown>> | undefined,
-    rowsAffected: result.rowsAffected,
-    returnValue: result.returnValue,
-    durationMs: Date.now() - started,
-  };
+    const started = Date.now();
+    const result = await request.execute(name);
+
+    return {
+      recordsets: result.recordsets as sql.IRecordSet<Record<string, unknown>>[],
+      recordset: result.recordset as sql.IRecordSet<Record<string, unknown>> | undefined,
+      rowsAffected: result.rowsAffected,
+      returnValue: result.returnValue,
+      durationMs: Date.now() - started,
+    };
+  });
 }
 
 // --- The eleven live procedures -------------------------------------------------
