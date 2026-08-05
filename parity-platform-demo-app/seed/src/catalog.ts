@@ -166,10 +166,8 @@ export function buildCatalog(): Product[] {
       const vatRate = 21;
       const supplier = r.pick(SUPPLIERS);
 
-      // Popularity deliberately takes only 11 distinct values across 300 products, so
-      // sp_SearchProducts' ORDER BY Popularity DESC has tie groups of ~27 rows and no
-      // tiebreaker. Paged replays then legitimately differ — that is the noise the
-      // classifier has to learn to dismiss.
+      // Popularity is maintained in steps of 10 by the merchandising team, so it takes
+      // only 11 distinct values across the whole catalogue.
       const popularity = r.int(0, 10) * 10;
 
       const wh1 = r.int(0, 40);

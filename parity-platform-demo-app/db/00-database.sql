@@ -1,6 +1,5 @@
 -- ParityShop database bootstrap. Runs against master.
--- Czech_CI_AS is the collation a Czech shop set up in 2011 would have picked, and it
--- makes sp_SearchProducts' missing ORDER BY tiebreaker genuinely unstable on accented ties.
+-- Czech_CI_AS je collation zvolena pri zalozeni v roce 2011, meni se jen pres migraci.
 
 IF DB_ID('ParityShop') IS NOT NULL
 BEGIN
@@ -15,11 +14,9 @@ GO
 ALTER DATABASE ParityShop SET RECOVERY SIMPLE;
 GO
 
--- Database Mail. sp_SyncWarehouseDispatch sends dispatch orders to the warehouse over
--- SMTP, which is what makes its `external` oracle class a property of the code and not a
--- label. On SQL Server for Linux this is the only outbound channel available from T-SQL:
--- xp_cmdshell does not exist, sp_OACreate is Windows-only, sp_invoke_external_rest_endpoint
--- is Azure-only, and CLR is SAFE-only. See docs/DECISIONS.md.
+-- Database Mail -- podklady k expedici chodi na sklady mailem. Drive to resil
+-- sp_OACreate + WinHttp primo v procedure, po prechodu na Linux to prestalo fungovat
+-- (xp_cmdshell ani OLE Automation tam nejsou) a prepsalo se to na sp_send_dbmail.
 EXEC sp_configure 'show advanced options', 1;
 RECONFIGURE;
 GO

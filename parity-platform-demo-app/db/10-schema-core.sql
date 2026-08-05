@@ -1,10 +1,6 @@
--- The two wide tables. This shape is the thing being demonstrated, not an accident.
---
--- Catalog is written by SIX procedures that mostly do not call each other.
--- OrderLedger is written by FIVE. The column overlap between unrelated procedures is
--- what makes M2's data-coupling graph a discovery rather than a decoration; if it were
--- faked the whole estate story collapses. Overlapping columns are marked [W:n] with the
--- number of distinct procedures that write them.
+-- Hlavni tabulky eshopu. Catalog vznikl 2011, OrderLedger 2012, od te doby se jen
+-- pridavaly sloupce. Nekolikrat se resilo rozdeleni na vic tabulek, nikdy se to
+-- nedotahlo -- viz zapis z porady 3/2017.
 
 USE ParityShop;
 GO
@@ -29,25 +25,25 @@ CREATE TABLE dbo.Catalog (
     PriceNet             DECIMAL(18,4)  NOT NULL,
     PriceWithVat         DECIMAL(18,4)  NULL,
     VatRate              DECIMAL(5,2)   NULL,
-    PriceWithDiscount    DECIMAL(18,4)  NULL,   -- [W:2] sp_LegacyPriceImport_v2, sp_ApplyPromoCode
-    DiscountPct          DECIMAL(5,2)   NULL,   -- [W:2] sp_LegacyPriceImport_v2, sp_ApplyPromoCode
+    PriceWithDiscount    DECIMAL(18,4)  NULL,
+    DiscountPct          DECIMAL(5,2)   NULL,
     DiscountValidFrom    DATETIME2(3)   NULL,
     DiscountValidTo      DATETIME2(3)   NULL,
     PurchasePrice        DECIMAL(18,4)  NULL,
     RecommendedPrice     DECIMAL(18,4)  NULL,
     Currency             NVARCHAR(3)    NULL,
-    LastQuotedPrice      DECIMAL(18,4)  NULL,   -- [W:2] sp_CalculateOrderTotal, sp_LegacyPriceImport_v2
-    LastQuotedAt         DATETIME2(3)   NULL,   -- [W:2] sp_CalculateOrderTotal, sp_LegacyPriceImport_v2
+    LastQuotedPrice      DECIMAL(18,4)  NULL,
+    LastQuotedAt         DATETIME2(3)   NULL,
     PriceImportBatch     NVARCHAR(40)   NULL,
 
     -- stock
-    StockQty             INT            NULL,   -- [W:3] sp_ReserveStock, sp_PlaceOrder, sp_SyncWarehouseDispatch
-    ReservedQty          INT            NULL,   -- [W:2] sp_ReserveStock, sp_PlaceOrder
+    StockQty             INT            NULL,
+    ReservedQty          INT            NULL,
     StockQtyWh1          INT            NULL,
     StockQtyWh2          INT            NULL,
     StockQtyWh3          INT            NULL,
     ReorderLevel         INT            NULL,
-    LastStockSyncAt      DATETIME2(3)   NULL,   -- [W:2] sp_SyncWarehouseDispatch, sp_ReserveStock
+    LastStockSyncAt      DATETIME2(3)   NULL,
     StockStatusCode      TINYINT        NULL,
 
     -- flags
@@ -57,8 +53,7 @@ CREATE TABLE dbo.Catalog (
     IsClearance          BIT            NULL,
     AllowBackorder       BIT            NULL,
 
-    -- merchandising. Popularity has huge tie groups on purpose: sp_SearchProducts sorts
-    -- by it with no unique tiebreaker, so paged replays legitimately differ.
+    -- merchandising
     Popularity           INT            NULL,
     RatingAvg            DECIMAL(3,2)   NULL,
     RatingCount          INT            NULL,
@@ -76,8 +71,8 @@ CREATE TABLE dbo.Catalog (
     -- audit
     CreatedAt            DATETIME2(3)   NULL,
     CreatedBy            NVARCHAR(60)   NULL,
-    ModifiedAt           DATETIME2(3)   NULL,   -- [W:6] every procedure that writes Catalog
-    ModifiedBy           NVARCHAR(60)   NULL,   -- [W:6] every procedure that writes Catalog
+    ModifiedAt           DATETIME2(3)   NULL,
+    ModifiedBy           NVARCHAR(60)   NULL,
     RowVersionTag        NVARCHAR(40)   NULL,
 
     -- migrace z Navision 2013, sloupce uz nikdo necte. Smazat az po vyrazeni starych reportu.
@@ -91,8 +86,7 @@ CREATE TABLE dbo.Catalog (
 GO
 
 CREATE TABLE dbo.OrderLedger (
-    -- One row per order LINE. Order-level columns are repeated on every line, which is
-    -- why sp_CalculateOrderTotal has to update N rows to cache one total.
+    -- jeden radek = jedna polozka objednavky, hlavickove sloupce se opakuji na kazdem radku
     OrderLineID                 BIGINT IDENTITY(1,1) NOT NULL,
     OrderID                     INT            NOT NULL,
     OrderNumber                 NVARCHAR(20)   NOT NULL,
@@ -100,19 +94,19 @@ CREATE TABLE dbo.OrderLedger (
 
     -- customer snapshot, frozen at order time
     CustomerID                  INT            NULL,
-    CustomerEmailSnapshot       NVARCHAR(200)  NULL,  -- [W:2] sp_PlaceOrder, sp_MigrateCustomerAddresses
-    CustomerNameSnapshot        NVARCHAR(200)  NULL,  -- [W:2] sp_PlaceOrder, sp_MigrateCustomerAddresses
-    CustomerPhoneSnapshot       NVARCHAR(40)   NULL,  -- [W:2] sp_PlaceOrder, sp_MigrateCustomerAddresses
+    CustomerEmailSnapshot       NVARCHAR(200)  NULL,
+    CustomerNameSnapshot        NVARCHAR(200)  NULL,
+    CustomerPhoneSnapshot       NVARCHAR(40)   NULL,
     CustomerLoyaltyTierSnapshot TINYINT        NULL,
-    CustomerCountryCode         NVARCHAR(2)    NULL,  -- CZ / SK, drives the VAT branch
+    CustomerCountryCode         NVARCHAR(2)    NULL,  -- CZ / SK
 
-    BillStreet                  NVARCHAR(200)  NULL,  -- [W:2] sp_PlaceOrder, sp_MigrateCustomerAddresses
-    BillCity                    NVARCHAR(100)  NULL,  -- [W:2]
-    BillZip                     NVARCHAR(10)   NULL,  -- [W:2]
+    BillStreet                  NVARCHAR(200)  NULL,
+    BillCity                    NVARCHAR(100)  NULL,
+    BillZip                     NVARCHAR(10)   NULL,
     BillCountry                 NVARCHAR(2)    NULL,
-    ShipStreet                  NVARCHAR(200)  NULL,  -- [W:2] sp_PlaceOrder, sp_MigrateCustomerAddresses
-    ShipCity                    NVARCHAR(100)  NULL,  -- [W:2]
-    ShipZip                     NVARCHAR(10)   NULL,  -- [W:2]
+    ShipStreet                  NVARCHAR(200)  NULL,
+    ShipCity                    NVARCHAR(100)  NULL,
+    ShipZip                     NVARCHAR(10)   NULL,
     ShipCountry                 NVARCHAR(2)    NULL,
     ShipCompany                 NVARCHAR(150)  NULL,
 
@@ -130,19 +124,19 @@ CREATE TABLE dbo.OrderLedger (
     LineTotal                   DECIMAL(18,4)  NULL,
 
     -- order totals, cached onto every line
-    TotalNet                    DECIMAL(18,4)  NULL,  -- [W:2] sp_CalculateOrderTotal, sp_PlaceOrder
-    TotalVat                    DECIMAL(18,4)  NULL,  -- [W:2]
-    TotalWithVat                DECIMAL(18,4)  NULL,  -- [W:2]
-    ShippingCost                DECIMAL(18,4)  NULL,  -- [W:2]
+    TotalNet                    DECIMAL(18,4)  NULL,
+    TotalVat                    DECIMAL(18,4)  NULL,
+    TotalWithVat                DECIMAL(18,4)  NULL,
+    ShippingCost                DECIMAL(18,4)  NULL,
     ShippingMethod              NVARCHAR(40)   NULL,
     ShippingVatRate             DECIMAL(5,2)   NULL,
-    DiscountAmount              DECIMAL(18,4)  NULL,  -- [W:2] sp_ApplyPromoCode, sp_CalculateOrderTotal
-    PromoCodeUsed               NVARCHAR(40)   NULL,  -- [W:2] sp_ApplyPromoCode, sp_CalculateOrderTotal
-    PromoDiscountAmount         DECIMAL(18,4)  NULL,  -- [W:2]
+    DiscountAmount              DECIMAL(18,4)  NULL,
+    PromoCodeUsed               NVARCHAR(40)   NULL,
+    PromoDiscountAmount         DECIMAL(18,4)  NULL,
     LoyaltyDiscountAmount       DECIMAL(18,4)  NULL,
     LoyaltyPointsEarned         INT            NULL,
     LoyaltyPointsSpent          INT            NULL,
-    CalcCachedAt                DATETIME2(3)   NULL,  -- [W:2] sp_CalculateOrderTotal, sp_PlaceOrder
+    CalcCachedAt                DATETIME2(3)   NULL,
     CalcVersion                 NVARCHAR(20)   NULL,
 
     -- payment
@@ -152,12 +146,12 @@ CREATE TABLE dbo.OrderLedger (
     PaidAt                      DATETIME2(3)   NULL,
 
     -- status history flattened. Kdyz dojdou sloupce, prida se Status7. Zatim staci 6.
-    Status1                     NVARCHAR(30)   NULL,  -- [W:3] sp_PlaceOrder, sp_ReserveStock, sp_SyncWarehouseDispatch
-    Status2                     NVARCHAR(30)   NULL,  -- [W:3]
-    Status3                     NVARCHAR(30)   NULL,  -- [W:3]
-    Status4                     NVARCHAR(30)   NULL,  -- [W:3]
-    Status5                     NVARCHAR(30)   NULL,  -- [W:3]
-    Status6                     NVARCHAR(30)   NULL,  -- [W:3]
+    Status1                     NVARCHAR(30)   NULL,
+    Status2                     NVARCHAR(30)   NULL,
+    Status3                     NVARCHAR(30)   NULL,
+    Status4                     NVARCHAR(30)   NULL,
+    Status5                     NVARCHAR(30)   NULL,
+    Status6                     NVARCHAR(30)   NULL,
     Status1At                   DATETIME2(3)   NULL,
     Status2At                   DATETIME2(3)   NULL,
     Status3At                   DATETIME2(3)   NULL,

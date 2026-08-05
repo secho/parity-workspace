@@ -1,5 +1,4 @@
--- Reference data. Every date is a literal anchored to DEMO_EPOCH (2026-08-05) so that
--- the same seed produces the same numbers at every rehearsal. See docs/DECISIONS.md.
+-- Ciselniky. Data jsou pevne, nemeni se generatorem.
 
 USE ParityShop;
 GO
@@ -29,9 +28,8 @@ INSERT INTO dbo.VatRate (CountryCode, RateCode, Rate, ValidFrom) VALUES
     ('SK', 'reduced',   10.00, '2024-01-01');
 GO
 
--- Overlapping validity windows on purpose: sp_ApplyPromoCode has to pick one, and its
--- rule for picking is not written down anywhere. StacksWithLoyalty = 1 is the branch
--- sp_CalculateOrderTotal treats differently.
+-- Kampane se casto prekryvaji, marketing to tak chce. Ktery kod se pouzije kdyz plati
+-- vic najednou nikde nestoji, resi se to az v procedure.
 INSERT INTO dbo.PromoCode
     (Code, Description, DiscountPct, DiscountAmount, MinOrderValue, ValidFrom, ValidTo,
      MaxUses, UsedCount, MaxUsesPerCustomer, StacksWithLoyalty, CategoryID, CountryCode, IsActive)

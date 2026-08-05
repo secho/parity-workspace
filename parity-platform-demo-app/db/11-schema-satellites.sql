@@ -1,6 +1,5 @@
--- Satellites. Narrower than the two core tables, but Customer and CustomerScore still
--- carry write overlap: sp_RecalculateCustomerScore and the deprecated
--- sp_RecomputeLoyaltyTier both write Customer.LoyaltyTier.
+-- Ciselniky a vedlejsi tabulky. Nekolik z nich vzniklo az pozdeji, kdyz uz se do
+-- Catalogu a OrderLedgeru neveslo dalsi rozsireni.
 
 USE ParityShop;
 GO
@@ -23,7 +22,7 @@ CREATE TABLE dbo.Warehouse (
     Name           NVARCHAR(120) NOT NULL,
     City           NVARCHAR(100) NULL,
     CountryCode    NVARCHAR(2)   NULL,
-    DispatchEmail  NVARCHAR(200) NULL,   -- sp_SyncWarehouseDispatch mails this address
+    DispatchEmail  NVARCHAR(200) NULL,   -- adresa expedice, chodi sem podklady k baleni
     IsActive       BIT           NULL,
     CONSTRAINT PK_Warehouse PRIMARY KEY (WarehouseID)
 );
@@ -41,8 +40,8 @@ CREATE TABLE dbo.Customer (
     CountryCode      NVARCHAR(2)   NULL,   -- CZ / SK
     CompanyName      NVARCHAR(150) NULL,
     VatId            NVARCHAR(20)  NULL,
-    LoyaltyTier      TINYINT       NULL,   -- [W:2] sp_RecalculateCustomerScore, sp_RecomputeLoyaltyTier_deprecated
-    LoyaltyPoints    INT           NULL,   -- [W:2]
+    LoyaltyTier      TINYINT       NULL,
+    LoyaltyPoints    INT           NULL,
     TotalSpent       DECIMAL(18,4) NULL,
     OrderCount       INT           NULL,
     RegisteredAt     DATETIME2(3)  NULL,
@@ -98,7 +97,7 @@ CREATE TABLE dbo.PromoCode (
     MaxUses           INT           NULL,
     UsedCount         INT           NULL,
     MaxUsesPerCustomer INT          NULL,
-    StacksWithLoyalty BIT           NULL,   -- the branch that carries the planted defect
+    StacksWithLoyalty BIT           NULL,   -- lze kombinovat s vernostni slevou (od kampane 2019)
     CategoryID        INT           NULL,
     CountryCode       NVARCHAR(2)   NULL,
     IsActive          BIT           NULL,
