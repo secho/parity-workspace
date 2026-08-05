@@ -149,9 +149,11 @@ export async function extractWriteSet(mark: CallMark): Promise<WriteSet> {
 
   const writeSet: WriteSet = {};
 
-  result.recordsets.forEach((recordset, index) => {
+  // One result set per tracked table, in the order the batch was generated.
+  const recordsets = result.recordsets as unknown as Record<string, unknown>[][];
+
+  recordsets.forEach((rows, index) => {
     const table = TRACKED_TABLES[index];
-    const rows = recordset as unknown as Record<string, unknown>[];
     if (!table || rows.length === 0) return;
 
     const cols = columns.get(table.name) ?? [];
