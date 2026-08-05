@@ -1,0 +1,37 @@
+{
+  "$comment": [
+    "The answer key for verify-m3. Lives in scripts/, which is not mounted into the",
+    "container the agent runs in — the agent must reach these conclusions from",
+    "read_procedure and query_capture alone.",
+    "",
+    "sp_CalculateOrderTotal is expected to be `nondet`, not the `det_write` SPEC §3's table",
+    "says. It reads GETDATE() into a variable and BRANCHES on it at line 123 to decide promo",
+    "validity, and skills/triage.md's clock rule makes that nondet. Both readings are",
+    "defensible and the rule wins: it is det_write GIVEN A PINNED CLOCK, exactly as",
+    "sp_PlaceOrder is shadowable given a seam, and the seam is what M6 delivers. If the",
+    "Estate screen shows nondet there, that is the rule working."
+  ],
+  "expected": {
+    "sp_GetProductDetail": { "oracleClass": "pure_read", "riskClass": "none" },
+    "sp_SearchProducts": { "oracleClass": "pure_read", "riskClass": "none" },
+    "sp_GetProductAvailability": { "oracleClass": "pure_read", "riskClass": "none" },
+    "sp_GetCartSummary": { "oracleClass": "pure_read", "riskClass": "money" },
+    "sp_CalculateOrderTotal": { "oracleClass": "nondet", "riskClass": "money", "requiresSeam": true },
+    "sp_ReserveStock": { "oracleClass": "det_write", "riskClass": "none" },
+    "sp_ApplyPromoCode": { "oracleClass": "nondet", "riskClass": "money", "requiresSeam": true },
+    "sp_PlaceOrder": { "oracleClass": "nondet", "riskClass": "money", "requiresSeam": true },
+    "sp_SyncWarehouseDispatch": { "oracleClass": "external", "riskClass": "none", "requiresSeam": true },
+    "sp_RecalculateCustomerScore": { "oracleClass": "none", "riskClass": "none" },
+    "sp_LegacyPriceImport_v2": { "oracleClass": "det_write", "riskClass": "money" },
+    "sp_ExportCatalogXml_OLD": { "oracleClass": "pure_read", "riskClass": "none" },
+    "sp_MigrateCustomerAddresses": { "oracleClass": "det_write", "riskClass": "none" },
+    "sp_RecomputeLoyaltyTier_deprecated": { "oracleClass": "det_write", "riskClass": "none" }
+  },
+  "notes": {
+    "sp_GetCartSummary": "pure_read but money-risk: it computes totals a customer sees, by copy-pasted logic from sp_CalculateOrderTotal.",
+    "sp_ApplyPromoCode": "Branches on GETDATE() at line 65 for the validity window — same clock rule as sp_CalculateOrderTotal.",
+    "sp_PlaceOrder": "NEWID(), GETDATE() and IDENTITY, and it orchestrates three other procedures.",
+    "sp_SyncWarehouseDispatch": "Sends mail through sp_send_dbmail. A sent email cannot be rolled back, which is why it cannot be shadowed.",
+    "sp_RecalculateCustomerScore": "Ten years of accreted scoring rules with no definition of correct outside the procedure itself."
+  }
+}

@@ -2,7 +2,7 @@ import { NavLink } from 'react-router-dom';
 import { cs } from '../copy';
 
 /**
- * Estate · Kampaně · Fronta · Provoz. The last three are not built yet and say so —
+ * Estate · Kampaně · Fronta · Provoz. What is not built yet says so and does not navigate —
  * absent is fine, simulated is not. A single faked screen would cost the credibility of
  * every real one next to it.
  */
@@ -17,9 +17,11 @@ export function Sidebar(): JSX.Element {
         <NavLink to="/" className={({ isActive }) => (isActive ? 'active' : '')}>
           {cs.nav.estate}
         </NavLink>
-        <a className="disabled">{cs.nav.campaigns}</a>
-        <a className="disabled">{cs.nav.queue}</a>
-        <a className="disabled">{cs.nav.ops}</a>
+        <a className="disabled later-m7">{cs.nav.campaigns}</a>
+        <a className="disabled later-m5">{cs.nav.queue}</a>
+        <NavLink to="/provoz" className={({ isActive }) => (isActive ? 'active' : '')}>
+          {cs.nav.ops}
+        </NavLink>
       </div>
     </nav>
   );

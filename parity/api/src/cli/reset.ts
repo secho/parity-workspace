@@ -1,3 +1,4 @@
+import { clearWorkspaces } from '../agent/workspace.js';
 import { openStore, waitForPostgres } from '../db/client.js';
 import { applyMigrations } from '../db/migrate.js';
 import { loadConfig } from '../env.js';
@@ -18,7 +19,8 @@ await waitForPostgres(store.pool);
 await applyMigrations(store.db);
 
 await resetState(store.db);
-console.log('parity state cleared');
+await clearWorkspaces(config.agentWorkspace);
+console.log('parity state cleared — estate, specs, agent runs and run workspaces');
 
 const summary = await ingest(store.db, config);
 console.log(`re-ingested ${summary.procedures} procedures, ${summary.couplingEdges} coupling edges`);

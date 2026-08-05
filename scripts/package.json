@@ -6,7 +6,8 @@
   "scripts": {
     "verify-m0": "tsx verify-m0.ts",
     "verify-m1": "tsx verify-m1.ts",
-    "verify-m2": "tsx verify-m2.ts"
+    "verify-m2": "tsx verify-m2.ts",
+    "verify-m3": "tsx verify-m3.ts"
   },
   "dependencies": {
     "mssql": "^11.0.1",

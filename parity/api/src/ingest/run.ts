@@ -1,6 +1,6 @@
 import { sql as raw } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
-import { couplingEdges, procedureCalls, procedureColumns, procedures } from '../db/schema.js';
+import { agentRuns, couplingEdges, procedureCalls, procedureColumns, procedures, specs } from '../db/schema.js';
 import type { Config } from '../env.js';
 import { couplingEdges as buildEdges, writeOwners, type WriterEntry } from './coupling.js';
 import { connect, readCatalog, readInvocationStats, readProcedures } from './mssql.js';
@@ -155,7 +155,9 @@ export async function ingest(db: Db, config: Config): Promise<IngestSummary> {
  * an empty screen.
  */
 export async function resetState(db: Db): Promise<void> {
+  // procedures cascades to specs, agent_runs, agent_steps and audit_entries. policy_rules
+  // is configuration rather than state and is reasserted on boot, so it is left alone.
   await db.execute(
-    raw`TRUNCATE TABLE ${couplingEdges}, ${procedureCalls}, ${procedureColumns}, ${procedures} RESTART IDENTITY CASCADE`,
+    raw`TRUNCATE TABLE ${couplingEdges}, ${procedureCalls}, ${procedureColumns}, ${agentRuns}, ${specs}, ${procedures} RESTART IDENTITY CASCADE`,
   );
 }

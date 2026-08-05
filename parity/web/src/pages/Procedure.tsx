@@ -1,19 +1,42 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { cs, formatDate, formatInt } from '../copy';
-import { fetchProcedure, type ColumnAccess, type ProcedureResponse } from '../lib/api';
+import {
+  fetchProcedure,
+  fetchRuns,
+  fetchSpec,
+  type AgentRunInfo,
+  type ColumnAccess,
+  type ProcedureResponse,
+} from '../lib/api';
 
-type Tab = 'source' | 'data' | 'coupling';
+type Tab = 'source' | 'data' | 'coupling' | 'spec' | 'steps';
 
 export function Procedure(): JSX.Element {
   const { name = '' } = useParams();
   const [data, setData] = useState<ProcedureResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('source');
+  const [spec, setSpec] = useState<{ markdown: string; createdAt: string } | null>(null);
+  const [runs, setRuns] = useState<AgentRunInfo[]>([]);
 
   useEffect(() => {
     setData(null);
+    setSpec(null);
+    setRuns([]);
     fetchProcedure(name).then(setData, (err: Error) => setError(err.message));
+    void fetchSpec(name).then((r) => setSpec(r.spec), () => undefined);
+    void fetchRuns(name).then((r) => setRuns(r.runs), () => undefined);
+  }, [name]);
+
+  // Agent steps arrive live while a run is in flight. They are persisted as they happen,
+  // so this stream is a view onto the table rather than the only copy of it.
+  useEffect(() => {
+    const source = new EventSource(`/api/procedures/${encodeURIComponent(name)}/stream`);
+    source.onmessage = () => {
+      void fetchRuns(name).then((r) => setRuns(r.runs), () => undefined);
+    };
+    return () => source.close();
   }, [name]);
 
   if (error !== null) return <p className="empty">{cs.procedure.notFound}</p>;
@@ -101,7 +124,57 @@ export function Procedure(): JSX.Element {
         <button className={tab === 'coupling' ? 'active' : ''} onClick={() => setTab('coupling')}>
           {cs.procedure.tabs.coupling}
         </button>
+        <button className={tab === 'spec' ? 'active' : ''} onClick={() => setTab('spec')}>
+          {cs.spec.title}
+        </button>
+        <button className={tab === 'steps' ? 'active' : ''} onClick={() => setTab('steps')}>
+          {cs.steps.title}
+          {runs.length > 0 && <span className="chip none" style={{ marginLeft: 6 }}>{runs.length}</span>}
+        </button>
       </div>
+
+      {tab === 'spec' &&
+        (spec === null ? (
+          <p className="empty">{cs.spec.empty}</p>
+        ) : (
+          <>
+            <p className="subtle">{cs.spec.generatedAt(new Date(spec.createdAt).toLocaleString('cs-CZ'))}</p>
+            <div className="spec">{spec.markdown}</div>
+          </>
+        ))}
+
+      {tab === 'steps' &&
+        (runs.length === 0 ? (
+          <p className="empty">{cs.steps.empty}</p>
+        ) : (
+          runs.map((run) => (
+            <div className="run" key={run.runId}>
+              <div className="run-head">
+                <span className="skill">{run.skill}</span>
+                <span>{run.model ?? cs.common.none}</span>
+                <span>
+                  {run.numTurns ?? 0} {cs.steps.turns}
+                </span>
+                {run.inputTokens !== null && (
+                  <span>
+                    {cs.steps.tokens} {formatInt(run.inputTokens)} / {formatInt(run.outputTokens ?? 0)}
+                  </span>
+                )}
+                {run.costUsd !== null && <span>{cs.steps.cost} ${Number(run.costUsd).toFixed(4)}</span>}
+                <span className={`chip ${run.status === 'succeeded' ? 'good' : run.status === 'blocked' ? 'warn' : 'bad'}`}>
+                  {run.status}
+                </span>
+              </div>
+              {run.steps.map((step) => (
+                <div className="step" key={step.seq}>
+                  <span className="seq">{step.seq}</span>
+                  {step.toolName !== null && <span className="tool">{step.toolName}</span>}
+                  <span className="body">{step.text ?? ''}</span>
+                </div>
+              ))}
+            </div>
+          ))
+        ))}
 
       {tab === 'source' && <pre className="source">{procedure.sourceSql}</pre>}
 

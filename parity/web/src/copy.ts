@@ -86,6 +86,50 @@ export const cs = {
     absent: 'Zatím není. Přijde v pozdějším milníku.',
   },
 
+  runtime: {
+    directTooltip: 'Přímo na Anthropic API. Nastavením PARITY_LLM_BASE_URL se provoz přesměruje na gateway.',
+    noRunYet: 'zatím žádný běh',
+    notConfigured: 'chybí API klíč',
+  },
+
+  ops: {
+    title: 'Provoz',
+    skillsTitle: 'Skill registry',
+    skillsHint:
+      'Skutečné soubory na disku, které agent načítá. Úprava jednoho souboru se projeví v dalším běhu — bez rebuildu, bez deploye.',
+    skillColumns: { name: 'Skill', description: 'Co dělá', model: 'Model', from: 'Od' },
+    policyTitle: 'Policy — tiery autonomie',
+    policyHint:
+      'Tuhle tabulku čte PreToolUse hook a odmítne volání nad rámec tieru pro danou třídu úloh. Pravidla vynucuje platforma, ne prompt.',
+    policyColumns: { taskClass: 'Třída úlohy', tool: 'Nástroj', tier: 'Tier', human: 'Rozhoduje člověk', note: 'Poznámka' },
+    auditTitle: 'Audit log',
+    auditHint:
+      'Vzniká z PostToolUse hooku — nic se neinstrumentuje ručně, takže na nic nejde zapomenout. Tokeny a cena jsou na běhu, ne na volání: SDK je hlásí jednou za běh.',
+    auditColumns: { when: 'Kdy', run: 'Běh', tool: 'Nástroj', outcome: 'Výsledek', duration: 'Trvání', detail: 'Detail' },
+    auditEmpty: 'Zatím žádné volání nástroje. Audit log se naplní prvním během agenta.',
+    outcomeAllowed: 'povoleno',
+    outcomeBlocked: 'zablokováno',
+    agentBlocked: (code: string | null): string =>
+      code === 'placeholder_key'
+        ? 'Agent neběží: ANTHROPIC_API_KEY je jen zástupná hodnota z .env.example. Doplň klíč z Console do .env.'
+        : 'Agent neběží: v .env chybí ANTHROPIC_API_KEY. Doplň klíč z Console.',
+  },
+
+  spec: {
+    title: 'Specifikace',
+    empty: 'Specifikace zatím není. Vzniká skillem extract-spec.',
+    generatedAt: (when: string) => `vygenerováno ${when}`,
+  },
+
+  steps: {
+    title: 'Kroky agenta',
+    empty: 'Zatím žádný běh agenta nad touhle procedurou.',
+    turns: 'tahů',
+    cost: 'cena',
+    tokens: 'tokeny',
+    blocked: 'zablokováno policy',
+  },
+
   oracleClass: {
     pure_read: 'pure_read',
     det_write: 'det_write',

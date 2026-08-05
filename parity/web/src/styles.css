@@ -106,11 +106,131 @@ a {
 }
 
 .nav a.disabled::after {
-  content: "M3+";
   float: right;
   font-family: var(--mono);
   font-size: 10px;
   color: var(--text-faint);
+}
+
+.nav a.later-m5::after {
+  content: "M5";
+}
+
+.nav a.later-m7::after {
+  content: "M7";
+}
+
+/* --- runtime badge ----------------------------------------------------------- */
+
+.badge {
+  position: absolute;
+  top: 18px;
+  right: 24px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  padding: 3px 9px;
+}
+
+.badge-provider {
+  color: var(--text-dim);
+}
+
+.badge-model {
+  color: var(--accent);
+}
+
+.badge-model.none {
+  color: var(--text-faint);
+}
+
+.badge-mode {
+  color: var(--warn);
+  text-transform: uppercase;
+}
+
+.notice {
+  border: 1px solid var(--border-strong);
+  border-left: 2px solid var(--warn);
+  background: var(--surface);
+  color: var(--text-dim);
+  padding: 8px 12px;
+  font-size: 12px;
+}
+
+.audit-detail {
+  max-width: 380px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --- spec + agent steps ------------------------------------------------------ */
+
+.spec {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 14px 18px;
+  max-width: 78ch;
+  white-space: pre-wrap;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.run {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  margin-bottom: 10px;
+}
+
+.run-head {
+  display: flex;
+  gap: 14px;
+  align-items: baseline;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.run-head .skill {
+  color: var(--text);
+}
+
+.step {
+  display: flex;
+  gap: 10px;
+  padding: 5px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.step:last-child {
+  border-bottom: none;
+}
+
+.step .seq {
+  font-family: var(--mono);
+  color: var(--text-faint);
+  min-width: 22px;
+  text-align: right;
+}
+
+.step .tool {
+  font-family: var(--mono);
+  color: var(--accent);
+}
+
+.step .body {
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .main {

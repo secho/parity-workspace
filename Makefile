@@ -1,4 +1,4 @@
-.PHONY: up down seed seed-checksum traffic traffic-checksum ingest demo-reset \
+.PHONY: up down seed seed-checksum traffic traffic-checksum ingest demo-reset map-estate \
         verify-m0 verify-m1 verify-m2 verify-m3 verify-m4 verify-m5 verify-m6 verify-m7
 
 # Waits only for the containers that must exist BEFORE seeding. shop-api's health
@@ -64,8 +64,14 @@ traffic-checksum:
 verify-m2:
 	npm --prefix scripts install --silent
 	npm --prefix scripts run verify-m2
+# 28 live model runs — triage and extract-spec across all fourteen procedures. Separate
+# from verify-m3 on purpose: this happens once, the gate stays free to re-run.
+map-estate:
+	docker compose exec -T parity-api npx tsx src/cli/map-estate.ts
+
 verify-m3:
-	@echo "TODO M3 acceptance"; exit 1
+	npm --prefix scripts install --silent
+	npm --prefix scripts run verify-m3
 verify-m4:
 	@echo "TODO M4 acceptance"; exit 1
 verify-m5:
