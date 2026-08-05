@@ -1,0 +1,35 @@
+{
+  "permissions": {
+    "allow": [
+      "Edit",
+      "Write",
+      "Read",
+      "Glob",
+      "Grep",
+      "Bash(npm:*)",
+      "Bash(npx:*)",
+      "Bash(node:*)",
+      "Bash(pnpm:*)",
+      "Bash(docker compose:*)",
+      "Bash(docker:*)",
+      "Bash(make:*)",
+      "Bash(git:*)",
+      "Bash(gh pr:*)",
+      "Bash(gh repo view:*)",
+      "Bash(sqlcmd:*)",
+      "Bash(psql:*)",
+      "Bash(curl:*)"
+    ],
+    "deny": [
+      "Bash(rm -rf /*)",
+      "Bash(gh repo delete:*)",
+      "Bash(git push --force:*)",
+      "Read(./**/.env)",
+      "Read(./**/*.pem)",
+      "Bash(sudo:*)"
+    ]
+  },
+  "env": {
+    "PARITY_MODE": "live"
+  }
+}
