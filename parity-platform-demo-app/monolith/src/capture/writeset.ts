@@ -1,5 +1,5 @@
 import { getPool, sql } from '../db.js';
-import { TRACKED_TABLES } from './tables.js';
+import { TRACKED_TABLES, type TrackedTable } from './tables.js';
 
 /**
  * Write-set extraction: Change Tracking says WHICH rows and columns changed, temporal
@@ -70,37 +70,49 @@ async function loadColumns(): Promise<Map<string, ColumnMeta[]>> {
 }
 
 /**
- * One batch, twelve result sets — not twelve round-trips. Measured in the M1 spike: a
- * single table extraction over a 16k-row table costs ~38 ms, most of it round-trip, so
- * twelve separate calls would dominate the traffic budget on their own.
+ * Phase 1: which rows and columns changed, per table. Reads only Change Tracking's own
+ * side tables and evaluates the column mask — it never touches the base tables.
+ *
+ * This has to be separate from fetching values. The obvious single-query form joins
+ * `FOR SYSTEM_TIME AS OF` against all twelve tables on every capture, and AS OF unions
+ * base with history, so every extraction scanned every table whether or not it had
+ * changed. Measured: ~3 s per capture, against 38 ms for a single table in isolation.
+ * Most calls touch one to five tables, so the fix is simply not to read the rest.
  */
-async function buildExtractionSql(): Promise<string> {
+async function buildDetectSql(): Promise<string> {
   if (extractionSql) return extractionSql;
   const columns = await loadColumns();
 
-  const statements = TRACKED_TABLES.map((table) => {
+  extractionSql = TRACKED_TABLES.map((table) => {
     const cols = columns.get(table.name) ?? [];
-    const join = table.pk.map((k) => `x.[${k}] = ct.[${k}]`).join(' AND ');
     const pkSelect = table.pk.map((k) => `ct.[${k}] AS [pk_${k}]`).join(', ');
+    const maskSelect = cols
+      .map((c) => `CHANGE_TRACKING_IS_COLUMN_IN_MASK(${c.columnId}, ct.SYS_CHANGE_COLUMNS) AS [m_${c.name}]`)
+      .join(', ');
+    return `SELECT ct.SYS_CHANGE_OPERATION AS [__op], ${pkSelect}${maskSelect ? `, ${maskSelect}` : ''}
+            FROM CHANGETABLE(CHANGES dbo.[${table.name}], @v0) ct;`;
+  }).join('\n');
 
-    const valueSelect = cols
-      .map(
-        (c) =>
-          `a.[${c.name}] AS [a_${c.name}], b.[${c.name}] AS [b_${c.name}], ` +
-          `CHANGE_TRACKING_IS_COLUMN_IN_MASK(${c.columnId}, ct.SYS_CHANGE_COLUMNS) AS [m_${c.name}]`,
-      )
-      .join(',\n         ');
-
-    return `
-      SELECT ct.SYS_CHANGE_OPERATION AS [__op], ${pkSelect},
-         ${valueSelect}
-      FROM CHANGETABLE(CHANGES dbo.[${table.name}], @v0) ct
-      LEFT JOIN dbo.[${table.name}] a ON ${join.replace(/x\./g, 'a.')}
-      LEFT JOIN dbo.[${table.name}] FOR SYSTEM_TIME AS OF @t0 b ON ${join.replace(/x\./g, 'b.')};`;
-  });
-
-  extractionSql = statements.join('\n');
   return extractionSql;
+}
+
+/** Phase 2: row images for the handful of rows phase 1 reported, filtered by primary key
+ *  so both the base table and the temporal history can seek instead of scan. */
+function buildImageSql(table: TrackedTable, cols: ColumnMeta[], rowCount: number): string {
+  // `cols` already contains the key columns. Selecting them again produced a duplicate
+  // column name, which the driver collapses into an array — so the row key came back as
+  // "78,78" and never matched, silently nulling every before/after value.
+  const list = cols.map((c) => `[${c.name}]`).join(', ');
+  const predicate =
+    table.pk.length === 1
+      ? `[${table.pk[0]}] IN (${Array.from({ length: rowCount }, (_, i) => `@k${i}_0`).join(', ')})`
+      : Array.from({ length: rowCount }, (_, i) =>
+          `(${table.pk.map((k, j) => `[${k}] = @k${i}_${j}`).join(' AND ')})`,
+        ).join(' OR ');
+
+  return `
+    SELECT ${list} FROM dbo.[${table.name}] WHERE ${predicate};
+    SELECT ${list} FROM dbo.[${table.name}] FOR SYSTEM_TIME AS OF @t0 WHERE ${predicate};`;
 }
 
 /** Taken in a single round-trip so the CT version and the AS OF instant agree, and so the
@@ -136,54 +148,92 @@ const equalish = (a: unknown, b: unknown): boolean => {
   return String(a) === String(b);
 };
 
+/** Cap the rows imaged per table. A 40-line order is the realistic worst case; anything
+ *  beyond this is a bulk operation whose full image is not worth the capture cost. */
+const MAX_IMAGED_ROWS = 200;
+
 export async function extractWriteSet(mark: CallMark): Promise<WriteSet> {
   const pool = await getPool();
   const columns = await loadColumns();
-  const batch = await buildExtractionSql();
 
-  const result = await pool
+  // --- phase 1: what changed -------------------------------------------------
+  const detected = await pool
     .request()
     .input('v0', sql.BigInt, mark.version)
-    .input('t0', sql.DateTime2, mark.t0)
-    .query(batch);
+    .query(await buildDetectSql());
 
-  const writeSet: WriteSet = {};
-
-  // One result set per tracked table, in the order the batch was generated.
-  const recordsets = result.recordsets as unknown as Record<string, unknown>[][];
-
-  recordsets.forEach((rows, index) => {
+  const detectedSets = detected.recordsets as unknown as Record<string, unknown>[][];
+  const pending: { table: TrackedTable; rows: Record<string, unknown>[] }[] = [];
+  detectedSets.forEach((rows, index) => {
     const table = TRACKED_TABLES[index];
-    if (!table || rows.length === 0) return;
+    if (table && rows.length > 0) pending.push({ table, rows: rows.slice(0, MAX_IMAGED_ROWS) });
+  });
+  if (pending.length === 0) return {};
 
+  // --- phase 2: values, only for the tables that actually changed ------------
+  // One round-trip per changed table rather than one shared batch: the key parameter
+  // names repeat per table. `pending` is one to five tables in practice, never twelve.
+  type Image = {
+    after: Map<string, Record<string, unknown>>;
+    before: Map<string, Record<string, unknown>>;
+  };
+  const images = new Map<string, Image>();
+
+  for (const { table, rows } of pending) {
+    const request = pool.request().input('t0', sql.DateTime2, mark.t0);
+    rows.forEach((row, i) => {
+      table.pk.forEach((k, j) => request.input(`k${i}_${j}`, row[`pk_${k}`] as never));
+    });
+
+    const result = await request.query(buildImageSql(table, columns.get(table.name) ?? [], rows.length));
+    const [afterRows = [], beforeRows = []] = result.recordsets as unknown as Record<string, unknown>[][];
+    const key = (r: Record<string, unknown>): string => table.pk.map((k) => String(r[k])).join(' ');
+
+    images.set(table.name, {
+      after: new Map(afterRows.map((r) => [key(r), r])),
+      before: new Map(beforeRows.map((r) => [key(r), r])),
+    });
+  }
+
+  // --- assemble --------------------------------------------------------------
+  const writeSet: WriteSet = {};
+  for (const { table, rows } of pending) {
     const cols = columns.get(table.name) ?? [];
+    const image = images.get(table.name)!;
     const changes: RowChange[] = [];
 
     for (const row of rows) {
       const op = String(row.__op) as 'I' | 'U' | 'D';
       const pk: Record<string, unknown> = {};
       for (const k of table.pk) pk[k] = row[`pk_${k}`];
+      const lookup = table.pk.map((k) => String(pk[k])).join('');
+      const after = image.after.get(lookup) ?? {};
+      const before = image.before.get(lookup) ?? {};
 
       const changed: ColumnChange[] = [];
       for (const c of cols) {
-        const before = row[`b_${c.name}`] ?? null;
-        const after = row[`a_${c.name}`] ?? null;
+        const beforeValue = before[c.name] ?? null;
+        const afterValue = after[c.name] ?? null;
 
         // The CT mask is the authority on an UPDATE — it reports what the statement
-        // wrote, including a write that happened to set the same value. For inserts and
-        // deletes the mask covers every column, so fall back to "has a value".
+        // wrote, including a write that set the same value back. For inserts and deletes
+        // the mask covers every column, so fall back to "has a value".
         const inMask = row[`m_${c.name}`] === 1 || row[`m_${c.name}`] === true;
         const include =
-          op === 'U' ? inMask || !equalish(before, after) : op === 'I' ? after !== null : before !== null;
+          op === 'U'
+            ? inMask || !equalish(beforeValue, afterValue)
+            : op === 'I'
+              ? afterValue !== null
+              : beforeValue !== null;
 
-        if (include) changed.push({ column: c.name, before, after });
+        if (include) changed.push({ column: c.name, before: beforeValue, after: afterValue });
       }
 
       changes.push({ pk, op, columns: changed });
     }
 
     if (changes.length > 0) writeSet[table.name] = changes;
-  });
+  }
 
   return writeSet;
 }

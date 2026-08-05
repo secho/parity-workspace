@@ -100,6 +100,16 @@ export async function flush(): Promise<number> {
   try {
     await writeBatch(batch);
     return batch.length;
+  } catch (err) {
+    // Never lose capture rows silently. record() calls this as `void flush()`, so an
+    // unhandled rejection here would drop a whole batch with nothing on screen — and
+    // every number M2 through M5 computes would be quietly short. Put the rows back and
+    // say so loudly.
+    buffer.unshift(...batch);
+    console.error(
+      `[capture] flush of ${batch.length} rows failed, requeued: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return 0;
   } finally {
     flushing = null;
     resolveDone();

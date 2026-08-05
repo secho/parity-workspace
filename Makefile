@@ -1,4 +1,4 @@
-.PHONY: up down seed seed-checksum traffic demo-reset \
+.PHONY: up down seed seed-checksum traffic traffic-checksum demo-reset \
         verify-m0 verify-m1 verify-m2 verify-m3 verify-m4 verify-m5 verify-m6 verify-m7
 
 # Waits only for the containers that must exist BEFORE seeding. shop-api's health
@@ -31,7 +31,8 @@ seed-checksum:
 	npm --prefix parity-platform-demo-app/seed run checksum
 
 traffic:
-	@echo "TODO M1: 90 days of synthetic invocation history"
+	npm --prefix parity-platform-demo-app/traffic install --silent
+	npm --prefix parity-platform-demo-app/traffic run traffic
 
 demo-reset:
 	@echo "TODO M2: full reset to pristine pre-demo state, under 120s"
@@ -41,7 +42,14 @@ verify-m0:
 	npm --prefix scripts run verify-m0
 
 verify-m1:
-	@echo "TODO M1 acceptance"; exit 1
+	npm --prefix scripts install --silent
+	npm --prefix scripts run verify-m1
+
+# Regenerate the committed traffic fingerprint. Run only when the generator legitimately
+# changes — verify-m1 asserts the traffic still hashes to this value.
+traffic-checksum:
+	rm -f scripts/traffic-checksum.json
+	VERIFY_FAST=1 npm --prefix scripts run verify-m1
 verify-m2:
 	@echo "TODO M2 acceptance"; exit 1
 verify-m3:

@@ -1,5 +1,5 @@
 import { stream } from './rng.js';
-import { DEMO_EPOCH, ORDER_HISTORY_DAYS, daysBefore } from './epoch.js';
+import { DEMO_EPOCH, ORDER_HISTORY_DAYS, LEAP_DAY, LEAP_DAY_ORDER_COUNT, daysBefore } from './epoch.js';
 import type { Product } from './catalog.js';
 import type { Customer } from './customers.js';
 
@@ -128,7 +128,15 @@ export function buildOrders(products: Product[], customers: Customer[], orderCou
     // Customers are not uniform: a minority place most of the orders. That skew is what
     // makes sp_RecalculateCustomerScore's recency/frequency terms mean anything.
     const customer = customers[r.zipf(customers.length, 1.25)];
-    const orderedAt = daysBefore(r.int(1, ORDER_HISTORY_DAYS), r.int(0, 86_399_000));
+
+    // Draw unconditionally so the leap-day pin does not shift the PRNG stream for every
+    // order after it — determinism is easier to reason about when consumption is uniform.
+    const dayOffset = r.int(1, ORDER_HISTORY_DAYS);
+    const msOffset = r.int(0, 86_399_000);
+    const orderedAt =
+      orderId <= LEAP_DAY_ORDER_COUNT
+        ? new Date(LEAP_DAY.getTime() + msOffset)
+        : daysBefore(dayOffset, msOffset);
 
     // Mostly small baskets, a long tail of larger ones.
     const lineCount = r.chance(0.03) ? r.int(9, 16) : r.chance(0.25) ? r.int(4, 8) : r.int(1, 3);

@@ -59,6 +59,7 @@ services:
       MSSQL_SA_PASSWORD: "${MSSQL_SA_PASSWORD}"
       MSSQL_DATABASE: ParityShop
       PORT: "3000"
+      CAPTURE_DEBUG: "${CAPTURE_DEBUG:-}"
     ports:
       # Deliberately not 3000/5173: those collide with whatever else the presenter
       # has running, and localhost resolving to IPv6 first will silently hit the
