@@ -18,11 +18,13 @@ Update the checkboxes as you go. This file is the handoff between sessions.
 ## M1 — Capture and traffic
 - [ ] Change Tracking enabled; every procedure call records inputs, result set, **write set**, duration
 - [ ] Sampling policy: full for first 200 calls per proc, then 1-in-50, always on uncovered branches
+- [ ] Capture records the **ambient values a procedure read**, not just its input parameters. At minimum the clock. Several procedures read `GETDATE()` into a variable and then branch on it — `sp_CalculateOrderTotal` line 123 tests promo validity against wall-clock time.
+- [ ] Replay can **pin the recorded clock**. `verify-m1` asserts that replaying a captured `sp_CalculateOrderTotal` invocation with a pinned clock reproduces the captured result exactly.
 - [ ] Traffic generator produces 90 days of history in one run, power-law distributed
 - [ ] Rare branches present: leap day, negative stock, Slovak VAT, stacked promo, 40-line order
 - [ ] The 3 dead procedures have exactly zero invocations
 
-`make verify-m1` — asserts capture rows exist for all live procs, write sets non-empty for `sp_ReserveStock` across 4 tables, dead procs at zero, distribution is power-law.
+`make verify-m1` — asserts capture rows exist for all live procs, write sets non-empty for `sp_ReserveStock` across 4 tables, dead procs at zero, distribution is power-law, and a pinned-clock replay of `sp_CalculateOrderTotal` reproduces the captured result exactly.
 
 ## M2 — Estate ingestion
 - [ ] Parity app shell: sidebar, Postgres schema, Drizzle migrations
