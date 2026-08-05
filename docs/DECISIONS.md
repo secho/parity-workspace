@@ -72,3 +72,9 @@ Port 3000 was already held on the build machine by an unrelated dev server bound
 
 ## 2026-08-05 · The planted defect is a VAT-base divergence, not a totals-identity break
 In `sp_CalculateOrderTotal`, the branch where a `StacksWithLoyalty` promo meets a loyalty discount computes VAT on `net − promo`; every other branch computes it on the full net. The two differ by exactly `promo × vat`. It does **not** break the procedure's own `TotalWithVat = TotalNet + TotalVat` identity, so it is invisible to any self-consistency check and is only findable by comparing VAT against the rate table — which is one of the three invariants `SPEC.md` §4 has M4 propose for this procedure. Nothing in the source marks it.
+
+## 2026-08-05 · Agent must not be able to read its own answer key
+docs/SPEC.md states every procedure's oracle class, which three are dead,
+and where the planted bug is. If the agent can read it, triage is theatre
+and one question in the room exposes it. All procedure knowledge must come
+through read_procedure and query_capture only.

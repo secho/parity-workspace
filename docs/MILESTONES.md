@@ -40,6 +40,10 @@ Update the checkboxes as you go. This file is the handoff between sessions.
 - [ ] `triage` classifies all 14 into oracle classes correctly
 - [ ] `extract-spec` produces a readable Czech spec; run it over all 14
 - [ ] Procedure detail screen: source, spec, agent steps streaming via SSE
+- [ ] Agent runs with cwd in an isolated scratch dir, NOT the workspace root
+- [ ] settingSources points only at parity/skills/ — never the whole project
+- [ ] docs/ is unreachable from the agent's file tools; verify-m3 asserts
+      that a prompt asking the agent to read docs/SPEC.md fails
 
 `make verify-m3` — asserts every procedure has an `oracle_class` and a `Spec`, audit log has rows for every tool call, a deliberately over-tier action is blocked by the hook.
 
