@@ -9,7 +9,7 @@ Scope and schema: `../docs/SPEC.md` §3.
 - **The database is the product.** Two deliberately wide tables (`Catalog`, `OrderLedger`) plus satellites, with real column-level write overlap between procedures that never call each other. That overlap is the discovery the platform makes — if it is not genuine, the coupling graph is decoration.
 - **The procedures must read as legacy.** Use the `procedure-author` subagent, in batches of 3–4. See its instructions before writing any T-SQL.
 - **The monolith is thin.** It invokes procedures and wraps them with capture. Do not layer it, do not add a service layer, do not extract business logic upward. Its shape is part of the point.
-- **The frontend is minimal.** Product list, detail, cart. The demo choreography never opens it; traffic is driven over HTTP.
+- **The frontend is minimal but complete enough to use.** Product list, detail, cart, checkout and an order screen. The demo choreography never opens it and traffic is driven over HTTP, but the shop can place a real order and trigger dispatch — it exists to show that the estate genuinely works, so every button maps to exactly one stored procedure and says which. Do not grow it beyond that.
 
 ## Capture
 

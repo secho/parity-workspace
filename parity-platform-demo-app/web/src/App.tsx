@@ -2,6 +2,7 @@ import { Link, Route, Routes } from 'react-router-dom';
 import Products from './pages/Products.js';
 import ProductDetail from './pages/ProductDetail.js';
 import Cart from './pages/Cart.js';
+import Order from './pages/Order.js';
 
 export default function App() {
   return (
@@ -20,6 +21,7 @@ export default function App() {
           <Route path="/" element={<Products />} />
           <Route path="/produkt/:id" element={<ProductDetail />} />
           <Route path="/kosik" element={<Cart />} />
+          <Route path="/objednavka/:orderNumber" element={<Order />} />
         </Routes>
       </main>
     </>
