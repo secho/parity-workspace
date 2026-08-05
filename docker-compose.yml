@@ -1,0 +1,93 @@
+# ParityShop — the playground that gets refactored.
+# Parity's own services (Postgres, platform API, platform UI) are appended here at M2.
+#
+# The mssql image is amd64-only. On Apple Silicon it runs under emulation; the Step 0
+# smoke test measured 100k row inserts at 0.7s and 2000 procedure calls at 0.94s, so
+# emulation is not a constraint for this workload.
+
+services:
+  mssql:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    platform: linux/amd64
+    container_name: parityshop-mssql
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "${MSSQL_SA_PASSWORD}"
+      MSSQL_PID: Developer
+      MSSQL_MEMORY_LIMIT_MB: "2048"
+    ports:
+      - "${MSSQL_PORT:-1433}:1433"
+    volumes:
+      - mssql-data:/var/opt/mssql
+    healthcheck:
+      # -C trusts the self-signed cert; mssql-tools18 requires it.
+      test:
+        [
+          "CMD-SHELL",
+          "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -Q 'SELECT 1' || exit 1",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  # Database Mail target. sp_SyncWarehouseDispatch genuinely sends SMTP here, which is
+  # what makes its `external` oracle class a property of the code rather than a label.
+  # A sent mail cannot be rolled back — that is precisely why it cannot be shadowed.
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: parityshop-mailpit
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: "1"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "1"
+    ports:
+      - "${MAILPIT_SMTP_PORT:-1025}:1025"
+      - "${MAILPIT_UI_PORT:-8025}:8025"
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  shop-api:
+    build:
+      context: ./parity-platform-demo-app/monolith
+    container_name: parityshop-api
+    environment:
+      MSSQL_HOST: mssql
+      MSSQL_PORT: "1433"
+      MSSQL_SA_PASSWORD: "${MSSQL_SA_PASSWORD}"
+      MSSQL_DATABASE: ParityShop
+      PORT: "3000"
+    ports:
+      - "${SHOP_API_PORT:-3000}:3000"
+    volumes:
+      # Source is bind-mounted so tsx watch picks up edits without a rebuild.
+      - ./parity-platform-demo-app/monolith/src:/app/src:ro
+    depends_on:
+      mssql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  shop-web:
+    build:
+      context: ./parity-platform-demo-app/web
+    container_name: parityshop-web
+    environment:
+      SHOP_API_ORIGIN: http://shop-api:3000
+    ports:
+      - "${SHOP_WEB_PORT:-5173}:5173"
+    volumes:
+      - ./parity-platform-demo-app/web/src:/app/src:ro
+      - ./parity-platform-demo-app/web/index.html:/app/index.html:ro
+    depends_on:
+      shop-api:
+        condition: service_started
+
+volumes:
+  mssql-data:
