@@ -119,3 +119,89 @@ Also from the reviewer. The `BranchKey` proxy was derived from call parameters a
 
 ## 2026-08-05 · SPEC's 200 MB capture bound is now measured
 SPEC §3 requires the capture table stay under ~200 MB and nothing checked it — the design made it very likely true, which is not the same as verified. `verify-m1` now measures it from `sys.allocation_units`.
+
+---
+
+# M2
+
+## 2026-08-05 · Parity keeps its own Postgres, on host port 5433
+SPEC §4 puts Parity's state deliberately outside the database it analyses; the port is the
+part worth recording. 5432 was already taken on the build machine by an unrelated Postgres,
+and M0 already lost half an hour to a port race on 3000. Rules out sharing the demo app's
+MS SQL for convenience, which would have quietly destroyed the "could be pointed at Alza's
+real estate tomorrow" claim — Parity would own tables inside the estate it audits.
+
+## 2026-08-05 · reads/writes come from a text parser, not from the engine
+`sys.dm_sql_referenced_entities` is the obvious source of column-level truth and M0 already
+proved it unusable: it silently drops any statement it cannot bind, which is every
+`UPDATE ... FROM #temp`, and the gnarliest procedures are exactly the ones with temp tables.
+The parser resolves every identifier against `INFORMATION_SCHEMA`, so it cannot invent a
+table and `#ReserveLines`, `FROM DATETIME2` and `FETCH NEXT FROM score_cursor` need no
+special case. It finds 6 writers on `Catalog` and 6 on `OrderLedger`, matching what M0
+observed by execution. Anything it cannot parse — a `MERGE`, say — aborts the ingest rather
+than under-reporting, because an absent coupling edge looks exactly like a non-existent one.
+
+## 2026-08-05 · The parse is graded against reality, not against itself
+`verify-m2` reads M1's captured write sets and asserts every `Table.Column` the estate was
+*observed* to write appears in that procedure's parsed `writes[]`. Costs nothing, mutates
+nothing, and cannot be satisfied by a parser that merely looks right. This is the check that
+makes the coupling graph evidence instead of decoration.
+
+Two adjustments make it sound rather than approximately true. IDENTITY columns are excluded:
+the engine writes them and the source names them nowhere, so the parser correctly cannot see
+them. And the comparison uses the **EXEC closure**, not direct writes — `sp_PlaceOrder`
+orchestrates three other procedures, so its captured write set legitimately contains theirs.
+Without the call graph that reads as 34 parser gaps. The call graph is worth having anyway:
+it is the difference between "this procedure writes 87 columns" and "this procedure writes 53
+and delegates the rest".
+
+## 2026-08-05 · Dynamic SQL is parsed out of the string literals
+`sp_SearchProducts` builds its entire query as a string and hands it to `sp_executesql`, so
+blanking string literals — which every other part of the parser depends on — would report the
+estate's second-hottest procedure as touching nothing. That would be a lie about 29% of all
+traffic on the main screen. String literals that name a real table and read like SQL are
+parsed too, and everything found that way is flagged `inferred`: the parser cannot prove which
+branches concatenate at runtime and should not pretend otherwise. Recovers 21 `Catalog` columns.
+
+## 2026-08-05 · One captured row is contaminated, and the gate says so out loud
+`sp_CalculateOrderTotal` has `Catalog.SoldCount` in exactly one of 2 363 captured write sets,
+and only `sp_PlaceOrder` writes that column. Change Tracking unions the column mask across
+every change to a row since the capture's version, so a concurrent `sp_PlaceOrder` — almost
+certainly `verify-m0`'s probe, which talks to MS SQL directly and bypasses the monolith's
+write lock — landed inside the window. M1 documents that the window can absorb one.
+
+The gate distinguishes the two cases rather than widening to accommodate this. A column
+observed **more than once**, or one that no procedure in the estate writes, is a parser gap
+and fails. A column observed exactly once that some *other* procedure writes is reported as
+residue with its count. Loosening the assertion to make it pass would have hidden the next
+real gap; deleting the row would have hidden the fact that concurrency can do this at all.
+
+## 2026-08-05 · Ingestion excludes `CallerContext LIKE 'verify:%'`
+The same filter `verify-m1` applies to itself. Without it, running an acceptance gate moves
+the numbers on the Estate screen — precisely the drift hard rule 5 exists to prevent.
+
+## 2026-08-05 · Ingest refreshes estate facts; only `demo-reset` touches analysis
+`make ingest` upserts source, line counts, invocation counts and the parsed graphs, and
+deliberately leaves `oracle_class`, `oracle_state`, `campaign_status` and `domain` alone.
+Re-reading the source should not cost a run's worth of agent work. `make demo-reset` truncates
+everything and re-ingests, because beat 1 of the demo opens on fourteen procedures with
+coverage near zero — an empty screen is the wrong resting state. Rules out a single
+destructive ingest, which would have made M3 unable to re-read the estate without redoing
+triage.
+
+## 2026-08-05 · Coupling is ranked by how narrow the sharing is
+The first coupling view was dominated by `ModifiedAt` and `ModifiedBy` — every writer touches
+them, so the genuinely interesting collisions were buried under bookkeeping. Sorting by the
+number of procedures that write each column puts `Catalog.LastQuotedPrice` and
+`OrderLedger.TotalNet` at the top and audit columns at the bottom. A column six procedures
+write is an audit column; a column exactly two write is a fight nobody wrote down. Computed,
+never a hardcoded list of column names — Parity has to stay pointable at an estate whose
+naming conventions it has never seen.
+
+## 2026-08-05 · `blocker` is asserted derived in two independent ways
+Absence of a stored column is necessary but not sufficient — a cached value computed once at
+ingest would pass that check and still drift. `verify-m2` also flips one procedure's
+`oracle_state` directly in Postgres and asserts the blocker the API returns changes with it,
+then restores. The same probe proves coverage is invocation-weighted rather than counted:
+flipping `sp_GetProductDetail` moves coverage to 11,48%, its real share of traffic, where a
+per-procedure count would have said 7,14%.
