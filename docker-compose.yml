@@ -131,11 +131,25 @@ services:
       MSSQL_SA_PASSWORD: "${PARITY_READER_PASSWORD:-Parity_Reader_2026!}"
       PORT: "3000"
       PARITY_MODE: "${PARITY_MODE:-live}"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      # Point this at a LiteLLM-compatible endpoint to route through a gateway. Alza
+      # already runs one; Parity is a client of a gateway and never one itself, so this
+      # is the whole of the "point it at yours" change.
+      ANTHROPIC_BASE_URL: "${PARITY_LLM_BASE_URL:-}"
+      # Agent run directories. Outside /app on purpose — the SDK walks UP from cwd
+      # looking for .claude, and a scratch dir inside the app would inherit settings
+      # the agent must not have. See docs/DECISIONS.md.
+      PARITY_AGENT_WORKSPACE: /tmp/parity-agent
+      PARITY_SKILLS_DIR: /app/skills
     ports:
       - "${PARITY_API_PORT:-3200}:3000"
     volumes:
       - ./parity/api/src:/app/src:ro
       - ./parity/api/drizzle:/app/drizzle:ro
+      # Skills are real files. Mounted read-write-through from the host so that editing
+      # one mid-demo is picked up by the next run with no rebuild — the claim "update one
+      # file, every agent run sees it" has to be literally true and demonstrable.
+      - ./parity/skills:/app/skills:ro
     depends_on:
       parity-postgres:
         condition: service_healthy

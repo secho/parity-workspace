@@ -1,5 +1,5 @@
 import { relations } from 'drizzle-orm';
-import { boolean, index, integer, pgTable, serial, text, timestamp, unique } from 'drizzle-orm/pg-core';
+import { boolean, index, integer, numeric, pgTable, serial, text, timestamp, unique } from 'drizzle-orm/pg-core';
 
 /**
  * Parity's own state. Deliberately not the demo app's database — Parity must look
@@ -112,6 +112,126 @@ export const procedureCalls = pgTable(
   (t) => [unique('uq_procedure_call').on(t.callerId, t.calleeId)],
 );
 
+// --- M3: the agent, its receipts, and what it produced --------------------------------
+
+/**
+ * One skill invocation. Everything needed to replay it is persisted here, because
+ * `PARITY_MODE=replay` (M7) is meant to be a read from this table rather than a rebuild —
+ * and because the demo cannot depend on conference wifi.
+ */
+export const agentRuns = pgTable(
+  'agent_runs',
+  {
+    id: serial('id').primaryKey(),
+    runId: text('run_id').notNull().unique(),
+    skill: text('skill').notNull(),
+    /** Drives the policy lookup. A run's tier is a property of the task, not the prompt. */
+    taskClass: text('task_class').notNull(),
+    procedureId: integer('procedure_id').references(() => procedures.id, { onDelete: 'cascade' }),
+
+    /** running | succeeded | failed | blocked */
+    status: text('status').notNull().default('running'),
+    /** The model that actually served the run, read off the SDK's init message. */
+    model: text('model'),
+    provider: text('provider'),
+    prompt: text('prompt').notNull(),
+    output: text('output'),
+    error: text('error'),
+
+    numTurns: integer('num_turns'),
+    costUsd: numeric('cost_usd', { precision: 12, scale: 6 }),
+    inputTokens: integer('input_tokens'),
+    outputTokens: integer('output_tokens'),
+    durationMs: integer('duration_ms'),
+
+    startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp('finished_at', { withTimezone: true }),
+  },
+  (t) => [index('ix_agent_runs_procedure').on(t.procedureId)],
+);
+
+/** What the agent did, in order, for the live step view on the procedure screen. */
+export const agentSteps = pgTable(
+  'agent_steps',
+  {
+    id: serial('id').primaryKey(),
+    agentRunId: integer('agent_run_id')
+      .notNull()
+      .references(() => agentRuns.id, { onDelete: 'cascade' }),
+    seq: integer('seq').notNull(),
+    /** assistant | tool_use | tool_result | system | result */
+    kind: text('kind').notNull(),
+    toolName: text('tool_name'),
+    text: text('text'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [unique('uq_agent_step_seq').on(t.agentRunId, t.seq)],
+);
+
+/**
+ * The audit log. Appended by a `PostToolUse` hook and by the `PreToolUse` gate, so nothing
+ * is instrumented by hand and therefore nothing can be forgotten.
+ *
+ * Token and cost counts are deliberately absent here: the SDK reports them once per run on
+ * the result message, not per tool call. They live on `agent_runs`. Inventing a per-call
+ * number would be the kind of plausible fiction this whole build exists to avoid.
+ */
+export const auditEntries = pgTable(
+  'audit_entries',
+  {
+    id: serial('id').primaryKey(),
+    agentRunId: integer('agent_run_id')
+      .notNull()
+      .references(() => agentRuns.id, { onDelete: 'cascade' }),
+    seq: integer('seq').notNull(),
+    toolName: text('tool_name').notNull(),
+    inputSummary: text('input_summary'),
+    resultSummary: text('result_summary'),
+    durationMs: integer('duration_ms'),
+    /** allowed | blocked */
+    outcome: text('outcome').notNull(),
+    reason: text('reason'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('ix_audit_run').on(t.agentRunId)],
+);
+
+/**
+ * The autonomy-tier table. A real table that really gates: the `PreToolUse` hook reads it
+ * and refuses a call above the tier for that task class. Policy enforced by the platform,
+ * not by prompt wording — which is the point, and is the difference between a rule and a
+ * suggestion.
+ */
+export const policyRules = pgTable(
+  'policy_rules',
+  {
+    id: serial('id').primaryKey(),
+    taskClass: text('task_class').notNull(),
+    toolName: text('tool_name').notNull(),
+    /** 1 auto-proceed · 2 proceed and record · 3 human decides */
+    tier: integer('tier').notNull(),
+    requiresHuman: boolean('requires_human').notNull().default(false),
+    note: text('note'),
+  },
+  (t) => [unique('uq_policy_rule').on(t.taskClass, t.toolName)],
+);
+
+/** The Czech specification for one procedure. */
+export const specs = pgTable(
+  'specs',
+  {
+    id: serial('id').primaryKey(),
+    procedureId: integer('procedure_id')
+      .notNull()
+      .references(() => procedures.id, { onDelete: 'cascade' })
+      .unique(),
+    markdown: text('markdown').notNull(),
+    model: text('model'),
+    agentRunId: integer('agent_run_id').references(() => agentRuns.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+);
+
 export const proceduresRelations = relations(procedures, ({ many }) => ({
   columns: many(procedureColumns),
 }));
@@ -124,3 +244,8 @@ export type Procedure = typeof procedures.$inferSelect;
 export type ProcedureColumn = typeof procedureColumns.$inferSelect;
 export type CouplingEdge = typeof couplingEdges.$inferSelect;
 export type ProcedureCall = typeof procedureCalls.$inferSelect;
+export type AgentRun = typeof agentRuns.$inferSelect;
+export type AgentStep = typeof agentSteps.$inferSelect;
+export type AuditEntry = typeof auditEntries.$inferSelect;
+export type PolicyRule = typeof policyRules.$inferSelect;
+export type Spec = typeof specs.$inferSelect;

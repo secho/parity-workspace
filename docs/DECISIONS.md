@@ -268,3 +268,63 @@ Worth stating plainly because it will happen again on every milestone: the gates
 independent, and the order is `seed → verify-m0 → traffic → verify-m1 → demo-reset →
 verify-m2`. Running verify-m0 in the middle of that sequence destroys the capture data the
 later two depend on.
+
+---
+
+# M3
+
+## 2026-08-05 · Skills move to `parity/skills/<name>/SKILL.md`
+The Agent SDK discovers skills at `<cwd>/.claude/skills/<name>/SKILL.md` and does not find
+flat files, so the layout was not optional. Content is unchanged. Deviates from SPEC §4's
+`skills/*.md` wording; the upside is that a skill can now carry supporting files — a VAT
+rate table, a worked example — without revisiting the decision at M4.
+
+## 2026-08-05 · The agent's containment is three layers, and the first one is absence
+`docs/SPEC.md` states every procedure's oracle class, which three are dead, and where the
+planted bug is. The M0 entry already ruled that the agent must not read it. Three
+independent things now make that true, in decreasing order of how much argument they need:
+
+1. **`docs/` is not mounted into the container the agent runs in.** The answer key is not
+   merely out of reach, it is not in the filesystem. A path restriction can be reasoned
+   around; an absent file cannot.
+2. **The run workspace is `/tmp/parity-agent/<runId>`, outside `/app`.** This is the one
+   that is easy to get wrong: the SDK walks *up* from `cwd` looking for `.claude/`, so a
+   scratch directory inside the repository would have inherited the workspace root's
+   `.claude/settings.json` — which allows `Bash(*)`. That would have handed the agent a
+   shell and a route to everything, silently. Verified: nothing above `/tmp` holds a
+   `.claude`, and `/app` has none either.
+3. **`allowedTools` grants `Read` and `Write` and nothing else** — no Bash, no Glob, no
+   Grep, no web — with `permissionMode: 'dontAsk'`, which denies anything unlisted rather
+   than prompting. Every fact about a procedure arrives through `read_procedure` or
+   `query_capture`.
+
+`probe-workspace.ts` asserts the structural half on every run of the gate;
+`probe-containment.ts` asserts the live half by pointing the real agent at the file.
+
+## 2026-08-05 · Skills are symlinked into each run workspace, never copied
+The claim on stage is "update one skill file and every subsequent run picks it up", and
+with a copy that is true only in the sense that a rebuild would also make it true. The
+workspace links to the same directory the Provoz page lists and a reviewer can edit
+between runs, so the claim is demonstrable rather than described.
+
+## 2026-08-05 · The SDK's published TypeScript reference disagreed with the shipped types
+Checked before wiring anything, per the plan's own risk list, and three of the shapes the
+docs give are wrong in `@anthropic-ai/claude-agent-sdk@0.3.222`:
+
+- `HookCallback` takes `(input, toolUseID, options)`, not `(payload, extra)`.
+- Blocking a tool call is
+  `{ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason } }`,
+  not a bare `{ permissionDecision: 'deny' }`.
+- `HookCallbackMatcher` is `{ matcher?, hooks: HookCallback[], timeout? }`, not
+  `{ event, callback }`.
+
+Two shapes turned out better than documented and are now load-bearing for the gate:
+`SDKSystemMessage` carries `skills: string[]`, so "the skills really loaded" is an
+assertion rather than an inference; and `SDKResultSuccess` carries `permission_denials`,
+which is exactly the receipt the over-tier probe needs.
+
+## 2026-08-05 · Per-tool token counts do not exist, so the audit log does not invent them
+The SDK reports `usage` and `total_cost_usd` once per run, on the result message. Tokens
+and cost therefore live on `agent_runs`; `audit_entries` records tool name, arguments,
+result summary, duration and outcome. A plausible-looking per-call token number would have
+been the easiest thing in the build to fabricate and the hardest to notice.
