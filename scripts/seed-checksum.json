@@ -1,11 +1,13 @@
 {
-  "CatalogPrice": "2019153",
-  "CatalogPopularity": "18",
-  "CatalogStock": "77",
-  "OrderTotals": "14780412",
-  "OrderLineNet": "2960615",
-  "OrderQty": "3",
-  "OrderLineCount": "16214",
-  "CustomerScores": "14882",
-  "CustomerSpend": "1368170"
+  "CatalogPrice": "-5424532594",
+  "CatalogPopularity": "15830",
+  "CatalogStock": "11337",
+  "CatalogSku": "176453473726",
+  "OrderTotals": "564177949955",
+  "OrderLineNet": "-1110910507426",
+  "OrderQty": "23455",
+  "OrderLineCount": "16194",
+  "CustomerScores": "-78161939757",
+  "CustomerSpend": "-41926716481",
+  "CustomerEmail": "51607760938"
 }

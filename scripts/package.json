@@ -1,11 +1,10 @@
 {
-  "name": "parityshop-seed",
+  "name": "parity-verify",
   "private": true,
   "type": "module",
-  "description": "Deterministic seed for ParityShop. Same seed, same numbers, every run.",
+  "description": "Milestone acceptance checks. make verify-mN is the definition of done.",
   "scripts": {
-    "seed": "tsx src/index.ts",
-    "checksum": "tsx src/checksum.ts"
+    "verify-m0": "tsx verify-m0.ts"
   },
   "dependencies": {
     "mssql": "^11.0.1"

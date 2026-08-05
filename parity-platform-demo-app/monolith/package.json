@@ -1,13 +1,14 @@
 {
-  "name": "parityshop-seed",
+  "name": "parityshop-monolith",
   "private": true,
   "type": "module",
-  "description": "Deterministic seed for ParityShop. Same seed, same numbers, every run.",
+  "description": "Thin invoker over ParityShop's stored procedures. The business logic lives in the database.",
   "scripts": {
-    "seed": "tsx src/index.ts",
-    "checksum": "tsx src/checksum.ts"
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts"
   },
   "dependencies": {
+    "fastify": "^5.2.0",
     "mssql": "^11.0.1"
   },
   "devDependencies": {

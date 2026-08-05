@@ -7,15 +7,23 @@ export interface Customer {
   firstName: string;
   lastName: string;
   phone: string;
-  street: string;
-  city: string;
-  zip: string;
+  /** Null for accounts the 2014 address migration never reached — see oldAddressLine. */
+  street: string | null;
+  city: string | null;
+  zip: string | null;
   countryCode: 'CZ' | 'SK';
   companyName: string | null;
   vatId: string | null;
   loyaltyTier: number;
   loyaltyPoints: number;
   registeredAt: Date;
+  /**
+   * Free-text address left over from the pre-2014 schema. Only older accounts have it.
+   * sp_MigrateCustomerAddresses exists to fold this into the structured columns; it ran
+   * once, incompletely, and was never deleted. Without these rows that dead procedure
+   * would have nothing to write, and the deletion campaign would have nothing to weigh.
+   */
+  oldAddressLine: string | null;
 }
 
 const FIRST_M = ['Jan', 'Petr', 'Martin', 'Tomáš', 'Jakub', 'Lukáš', 'Ondřej', 'David', 'Michal', 'Filip', 'Vojtěch', 'Adam', 'Marek', 'Radek', 'Štěpán'];
@@ -60,16 +68,23 @@ export function buildCustomers(count = 500): Customer[] {
     const lastName = female ? r.pick(LAST_F) : r.pick(LAST_M);
     const [city, zip] = isSlovak ? r.pick(SK_CITIES) : r.pick(CZ_CITIES);
     const isCompany = r.chance(0.12);
+    const street = `${r.pick(STREETS)} ${r.int(1, 240)}`;
+    // A long tail of accounts the 2014 address migration never reached: their structured
+    // address columns are still empty and the whole address sits in free text.
+    // sp_MigrateCustomerAddresses exists to fix exactly these — it is dead, but the work
+    // it would do is not, which is what makes deleting it a judgement rather than a chore.
+    const unmigrated = r.chance(0.08);
 
     customers.push({
+      oldAddressLine: unmigrated ? `${street}, ${city}, ${zip}` : null,
       customerId: id,
       email: `${deaccent(firstName)}.${deaccent(lastName)}${id}@${r.pick(['seznam.cz', 'gmail.com', 'email.cz', 'centrum.cz', 'volny.cz'])}`,
       firstName,
       lastName,
       phone: `+${isSlovak ? '421' : '420'} ${r.int(600, 799)} ${r.int(100, 999)} ${r.int(100, 999)}`,
-      street: `${r.pick(STREETS)} ${r.int(1, 240)}`,
-      city,
-      zip,
+      street: unmigrated ? null : street,
+      city: unmigrated ? null : city,
+      zip: unmigrated ? null : zip,
       countryCode: isSlovak ? 'SK' : 'CZ',
       companyName: isCompany ? `${lastName} ${r.pick(COMPANIES)}` : null,
       vatId: isCompany ? `${isSlovak ? 'SK' : 'CZ'}${r.int(10000000, 99999999)}` : null,

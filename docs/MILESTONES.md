@@ -7,11 +7,11 @@ Update the checkboxes as you go. This file is the handoff between sessions.
 ---
 
 ## M0 — ParityShop stands up
-- [ ] `docker compose up --build` brings MS SQL Server 2022, monolith (Node 22 + TS + Fastify) and frontend up
-- [ ] Schema per SPEC §3: `Catalog` (~60 cols), `OrderLedger` (~70 cols), satellites
-- [ ] All 14 stored procedures created, **column write-overlap between unrelated procedures is real**
-- [ ] Seed: ~300 products, 8 categories, 3 warehouses, 500 customers, 5 000 orders
-- [ ] Shop is clickable: list, detail, cart
+- [x] `docker compose up --build` brings MS SQL Server 2022, monolith (Node 22 + TS + Fastify) and frontend up
+- [x] Schema per SPEC §3: `Catalog` (60 cols), `OrderLedger` (72 cols), satellites
+- [x] All 14 stored procedures created, **column write-overlap between unrelated procedures is real** — asserted by execution, 16 columns written by 2+ procedures
+- [x] Seed: 300 products, 8 categories, 3 warehouses, 500 customers, 5 000 orders (16 194 lines)
+- [x] Shop is clickable: list, detail, cart
 
 `make verify-m0` — asserts containers healthy, all 14 procedures exist, row counts match seed expectations, `GET /api/products` returns 200 with data.
 

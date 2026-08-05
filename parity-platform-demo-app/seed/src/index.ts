@@ -152,13 +152,14 @@ async function main(): Promise<void> {
     cust.columns.add('IsActive', sql.Bit, { nullable: true });
     cust.columns.add('ModifiedAt', sql.DateTime2(3), { nullable: true });
     cust.columns.add('ModifiedBy', sql.NVarChar(60), { nullable: true });
+    cust.columns.add('OldAddressLine', sql.NVarChar(300), { nullable: true });
     for (const c of customers) {
       const agg = aggregates.get(c.customerId)!;
       cust.rows.add(
         c.email, c.firstName, c.lastName, c.phone, c.street, c.city, c.zip, c.countryCode,
         c.companyName, c.vatId, c.loyaltyTier, c.loyaltyPoints,
         agg.totalSpent, agg.orderCount, c.registeredAt, agg.lastOrderAt,
-        1, c.registeredAt, 'seed',
+        1, c.registeredAt, 'seed', c.oldAddressLine,
       );
     }
     await pool.request().bulk(cust);
