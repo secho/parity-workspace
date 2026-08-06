@@ -538,9 +538,47 @@ async function main(): Promise<void> {
     section('The queue is real and the estate moved');
 
     const queue = await getJson<{ open: QueueItem[]; decided: QueueItem[] }>('/api/queue');
-    check(queue.open.length > 0, 'the queue holds the open findings', `${queue.open.length} open`);
+    // Open *or* decided. An earlier form required an open item and crashed once a human had
+    // worked the queue — which is the normal state after a demo, not an exceptional one. A
+    // gate that only runs before anyone has used the thing it gates is not much of a gate.
     check(
-      queue.open.every((item) => item.explanationCs !== null && item.cases > 0),
+      queue.open.length + queue.decided.length > 0,
+      'the queue holds the latest run\'s findings',
+      `${queue.open.length} open, ${queue.decided.length} decided`,
+    );
+
+    // The queue is work, not an archive.
+    //
+    // A signature names the *shape* of a difference, so it recurs identically in every run
+    // that reproduces it. Unscoped, the queue listed each finding once per shadow run and a
+    // human re-running the harness had to decide everything twice — found in use, on a stack
+    // with three runs and four findings that asked for eight decisions.
+    const everyItem = [...queue.open, ...queue.decided];
+    const queued = everyItem.map((item) => `${item.procedure} ${item.signature}`);
+    check(
+      new Set(queued).size === queued.length,
+      'no finding appears twice — the queue is scoped to the latest run, not every run',
+      `${queued.length} items, ${new Set(queued).size} distinct`,
+    );
+
+    const latestRuns = new Set(
+      (
+        await client.query<{ id: number }>(
+          `SELECT DISTINCT ON (procedure_id) id FROM shadow_runs
+           WHERE kind = 'shadow' AND status = 'succeeded' ORDER BY procedure_id, id DESC`,
+        )
+      ).rows.map((r) => r.id),
+    );
+    const totalRuns = (
+      await client.query<{ n: string }>("SELECT COUNT(*) AS n FROM shadow_runs WHERE kind = 'shadow'")
+    ).rows[0];
+    check(
+      everyItem.every((item) => latestRuns.has(item.shadowRunId)),
+      'and every item it does show belongs to its procedure\'s newest run',
+      `${totalRuns.n} runs recorded, ${latestRuns.size} of them current`,
+    );
+    check(
+      everyItem.every((item) => item.explanationCs !== null && item.cases > 0),
       'every queue item carries its Czech reasoning and how many cases it covers',
     );
 
@@ -551,25 +589,33 @@ async function main(): Promise<void> {
       `${summary.rawDiffs} raw, ${summary.resolvedInCode} in code, ${summary.reachedHuman} to a human`,
     );
 
-    // Deciding is what the screen is for, so the gate presses the button. Restored in a
-    // `finally` — verify-m2 learned that a gate must not be able to damage what it measures.
-    const item = queue.open[0];
+    // Deciding is what the screen is for, so the gate presses the button — and it works from
+    // whatever state a human left the queue in, deciding an already-decided item if that is
+    // all there is. Whatever was there before is put back in a `finally`, decision and all:
+    // verify-m2 learned that a gate must not be able to damage the thing it measures, and
+    // silently clearing someone's recorded decision is damage.
+    const item = queue.open[0] ?? queue.decided[0];
+    const priorAction = item.decision?.action ?? null;
+    const path = `/api/queue/${encodeURIComponent(item.signature)}/decision`;
     try {
-      await send('/api/queue/' + encodeURIComponent(item.signature) + '/decision', 'POST', {
-        action: 'preserve',
-        shadowRunId: item.shadowRunId,
-      });
+      await send(path, 'POST', { action: 'preserve', shadowRunId: item.shadowRunId });
       const afterDecision = await getJson<{ open: QueueItem[]; decided: QueueItem[] }>('/api/queue');
       check(
-        afterDecision.open.length === queue.open.length - 1 &&
+        !afterDecision.open.some((o) => o.signature === item.signature) &&
           afterDecision.decided.some((d) => d.signature === item.signature && d.decision?.action === 'preserve'),
         '`Zachovat chování` records the decision and the item leaves the open queue',
       );
     } finally {
-      await send('/api/queue/' + encodeURIComponent(item.signature) + '/decision', 'DELETE');
+      if (priorAction === null) await send(path, 'DELETE');
+      else await send(path, 'POST', { action: priorAction, shadowRunId: item.shadowRunId });
     }
-    const restored = await getJson<{ open: QueueItem[] }>('/api/queue');
-    check(restored.open.length === queue.open.length, 'the gate put the queue back');
+    const restored = await getJson<{ open: QueueItem[]; decided: QueueItem[] }>('/api/queue');
+    check(
+      restored.open.length === queue.open.length &&
+        restored.decided.find((d) => d.signature === item.signature)?.decision?.action === (priorAction ?? undefined),
+      'the gate put the queue back exactly as it found it',
+      priorAction === null ? 'was undecided' : `was ${priorAction}`,
+    );
 
     const estate = await getJson<{ procedures: { name: string; oracleState: string; blocker: { key: string } | null }[] }>(
       '/api/estate',

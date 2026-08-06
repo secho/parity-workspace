@@ -168,7 +168,7 @@ export default function Fronta(): JSX.Element {
         <>
           <h2 className="section-head">{cs.queue.openTitle}</h2>
           {queue.open.map((item) => (
-            <Item key={item.signature} item={item} onChange={load} />
+            <Item key={`${item.shadowRunId}:${item.signature}`} item={item} onChange={load} />
           ))}
         </>
       )}
@@ -177,7 +177,7 @@ export default function Fronta(): JSX.Element {
         <>
           <h2 className="section-head">{cs.queue.decidedTitle}</h2>
           {queue.decided.map((item) => (
-            <Item key={item.signature} item={item} onChange={load} />
+            <Item key={`${item.shadowRunId}:${item.signature}`} item={item} onChange={load} />
           ))}
         </>
       )}

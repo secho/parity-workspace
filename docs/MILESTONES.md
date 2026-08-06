@@ -130,14 +130,15 @@ unplanted finding came out of the same run: the hand-written service uses binary
 point, and 18 of 400 orders land exactly on a rounding boundary where SQL Server's decimal
 arithmetic rounds the other way.
 
-`make verify-m5` — **61 checks**. Asserts the shadow database is a real copy and that the
+`make verify-m5` — **63 checks**. Asserts the shadow database is a real copy and that the
 principal owning it is refused the estate outright, that the estate is byte-identical after a
 full replay and gained no capture rows, that every replayed case traces to a real sampled
 invocation with byte-identical inputs, that the majority of differences are resolved in code
 and none of those carries an agent run, that there is one model run per finding, that the
 promo/VAT defect surfaces as `behaviour_change` in a minority of cases while `TotalNet` does
 not, that no monetary difference is ever called noise, and that the queue's three buttons
-record a decision. Two probes supply the controls: `probe-shadow` replays the procedure
+record a decision, and that the queue shows only the newest run's findings rather than
+every run's. Two probes supply the controls: `probe-shadow` replays the procedure
 against itself and surfaces **nothing**, while adding one unit to a single value surfaces
 exactly one difference; `probe-decision` puts a live agent up against the tier table and
 asserts the hook refuses it and nothing is written.
