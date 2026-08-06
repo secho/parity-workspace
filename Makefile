@@ -134,10 +134,13 @@ verify-m5:
 # generate-oracles and shadow-run before it: it spends real money and several minutes, and the
 # gate asserts what it persisted.
 #
-# PARITY_SERVICE_FEEDBACK carries what the previous attempt got wrong, so a second attempt is a
-# correction rather than a re-roll.
+# FEEDBACK_FILE carries what the previous attempt got wrong, so a second attempt is a
+# correction rather than a re-roll. A file rather than a make variable: this is prose, it runs
+# to paragraphs, and a multi-line make variable is mangled at the make/shell boundary — the
+# quoting breaks before the agent ever sees it.
 implement-service:
-	docker compose exec -T -e PARITY_SERVICE_FEEDBACK="$(FEEDBACK)" parity-api npx tsx src/cli/implement-service.ts $(PROC)
+	docker compose exec -T -e PARITY_SERVICE_FEEDBACK="$$(test -n '$(FEEDBACK_FILE)' && cat '$(FEEDBACK_FILE)' || true)" \
+		parity-api npx tsx src/cli/implement-service.ts $(PROC)
 
 # Materialise the generated service onto disk. Runs on the HOST on purpose: parity-api has no
 # mount into parity-platform-demo-app, because the SDK's built-in Write is not prefixed

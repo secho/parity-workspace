@@ -155,7 +155,38 @@ M5's run.
 - [ ] Shadow run against the new service goes green after the human decision
 - [ ] `open_pr` opens a real PR on GitHub with spec, tests, service and the recorded decision attached
 
-`make verify-m6` — asserts the service passes all golden tests, the feature flag switches cleanly, a PR URL is produced.
+**The hand-written service from M5 stays, as the reference implementation.** It was recorded as
+a stub for M6 to replace; it is now permanent, and it is the harness's positive control — the
+only implementation that diverges from the procedure, and therefore the standing proof that the
+diff engine can still find a real behavioural difference. A green run against the generated
+service means nothing on its own; it means something beside a red one from the same harness, the
+same cases and the same database. `shadow_runs.implementation_id` is what lets `verify-m5` pin to
+`reference` and `verify-m6` to `generated`.
+
+Why the inversion: the M3 spec **documents the planted VAT defect in full** — `Chování` §12 gives
+the stacking formula, `Otevřené otázky` flags it by name. So a spec-faithful generated service
+reproduces the defect and goes green on the first try. It cannot be the source of beat 4's
+findings, and what it would produce instead is a scatter of accidental divergences that differ on
+every generation. See `docs/DECISIONS.md`.
+
+The agent writes `pricing.ts` and `persist.ts`. `index.ts` and `db.ts` are the shadow harness's
+contract — the replay route, `/health`, and the `/_admin/disconnect` handshake — and stay
+platform-owned. Said out loud rather than hidden.
+
+`make verify-m6` — asserts the service passes all golden tests, the feature flag switches cleanly,
+a PR is assembled with all four attachments, and — the load-bearing one — that the artefact hash
+the deployed service reports at `/health` is the one the agent wrote, so "what ran is what the
+agent wrote" is a query across two systems rather than a claim.
+
+**Gate order, once more.** The reference shadow run must come BEFORE the generated one:
+`latestRunIds` scopes the decision queue to the newest succeeded run per procedure, so a reference
+run afterwards re-fills the queue with findings that have already been decided.
+
+```
+demo-reset → map-estate → verify-m3 → generate-oracles → verify-m4
+  → shadow-db → shadow-run IMPL=reference → verify-m5
+  → implement-service → adopt-service → shadow-run IMPL=generated → verify-m6
+```
 
 ## M7 — Campaigns, reset, replay
 - [ ] Campaign runner + `Zmapovat estate` and `Smazat mrtvé procedury`
