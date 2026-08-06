@@ -5,7 +5,8 @@
   "description": "Deterministic seed for ParityShop. Same seed, same numbers, every run.",
   "scripts": {
     "seed": "tsx src/index.ts",
-    "checksum": "tsx src/checksum.ts"
+    "checksum": "tsx src/checksum.ts",
+    "shadow": "tsx src/shadow.ts"
   },
   "dependencies": {
     "mssql": "^11.0.1"

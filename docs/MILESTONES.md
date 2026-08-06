@@ -95,14 +95,58 @@ that coverage math is weighted not counted.
 `verify-m3` asserts coverage is still zero, which stops being true once oracles exist.
 
 ## M5 — Shadow harness  ⚠ the hard one
-- [ ] Snapshot database restore; replay runs in a transaction that always rolls back
-- [ ] Result-set and write-set diffing
-- [ ] Canonicalisation **in code before the model sees anything**: stable sort, float tolerance, timestamp and GUID normalisation via seam
-- [ ] `classify-diff` labels `noise` (with reason) vs `behaviour_change` (with explanation)
-- [ ] Decision queue screen with side-by-side and three actions
-- [ ] 2 000+ replayed calls of `sp_CalculateOrderTotal` in under 60 s
+- [x] `ParityShop_Shadow` — a restored copy on the same server, built by `make shadow-db` in
+      0.8 s and reverted between passes in **530 ms**. The replay **commits** there rather than
+      rolling back, which is what puts Change Tracking back in play; "production is untouched"
+      is then an observation about the connection string, not an argument about transactions
+- [x] Result-set and write-set diffing, per case, table and column — write sets from Change
+      Tracking, cross-checked against M4's independent fingerprint mechanism on the same
+      invocation and agreeing to the cent
+- [x] Canonicalisation **in code before the model sees anything** — `oracle/canonicalise.ts`
+      imported unchanged from M4. Measured: **1 668 raw differences, 1 600 resolved
+      mechanically (95,9%), 68 surviving**. Every resolved difference is stored with the
+      normalisation that resolved it and **no agent run**, so "the model never saw these" is a
+      query rather than a claim
+- [x] `classify-diff` labels `noise` (with a reason from a closed list) vs `behaviour_change`
+      (with a Czech explanation) — **one model run per finding, not per difference**: 4 runs
+      for 68 differences
+- [x] Decision queue screen with side-by-side, the agent's reasoning and three actions;
+      `oracle_state` moves to `shadow` and the blocker to `čeká na rozhodnutí`. The procedure
+      screen's shadow tab ships the per-run numbers and findings but **no chart over time** —
+      one run is not a series, and absent beats simulated
+- [x] **400 replayed calls covering 27 of 27 observed strata, both passes, in 16,2 s** —
+      40,5 ms per case
 
-`make verify-m5` — asserts a full shadow run completes, production DB is provably untouched, noise ratio is realistic, the planted promo/VAT bug surfaces as `behaviour_change`.
+`make shadow-db` after `make traffic`, then `make shadow-run`: 400 cases, 18 s, 4 findings.
+
+**The 2 000-call target is superseded** — see `docs/DECISIONS.md`. Two thousand calls drawn by
+volume are the same handful of branches repeated; 400 drawn by stratum cover every behaviour
+the estate was observed taking, and the honest figure is the one reported.
+
+**The planted promo/VAT defect surfaces as `behaviour_change` in 32 of 400 cases** — a
+minority, so a finding rather than a broken implementation — while `TotalNet` never diverges,
+which is precisely why fifteen years of self-consistency checks never saw it. A second,
+unplanted finding came out of the same run: the hand-written service uses binary floating
+point, and 18 of 400 orders land exactly on a rounding boundary where SQL Server's decimal
+arithmetic rounds the other way.
+
+`make verify-m5` — **61 checks**. Asserts the shadow database is a real copy and that the
+principal owning it is refused the estate outright, that the estate is byte-identical after a
+full replay and gained no capture rows, that every replayed case traces to a real sampled
+invocation with byte-identical inputs, that the majority of differences are resolved in code
+and none of those carries an agent run, that there is one model run per finding, that the
+promo/VAT defect surfaces as `behaviour_change` in a minority of cases while `TotalNet` does
+not, that no monetary difference is ever called noise, and that the queue's three buttons
+record a decision. Two probes supply the controls: `probe-shadow` replays the procedure
+against itself and surfaces **nothing**, while adding one unit to a single value surfaces
+exactly one difference; `probe-decision` puts a live agent up against the tier table and
+asserts the hook refuses it and nothing is written.
+
+**Gate order, again:** `demo-reset → map-estate → verify-m3 → generate-oracles → verify-m4 →
+shadow-db → shadow-run → verify-m5`. `verify-m4` asserts `oracle_state` is `golden` or
+`invariants`, which stops being true once a shadow run promotes it to `shadow`. `verify-m5`
+deliberately does **not** run `demo-reset` — it would take M3's and M4's live sweeps down with
+M5's run.
 
 ## M6 — Service and PR
 - [ ] `implement-service` generates `pricing-service` (Node + TS + Fastify)

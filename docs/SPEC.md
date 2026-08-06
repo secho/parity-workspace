@@ -217,6 +217,12 @@ The core mechanism. Must actually work, not be simulated.
 
 Target for the live demo: replay 2 000+ captured calls of `sp_CalculateOrderTotal` in under 60 seconds, produce a realistic number of raw diffs (dozens), classify nearly all as noise, surface 2–4 real ones.
 
+> **Superseded at M5, and the measured figures are in `docs/DECISIONS.md`.** Coverage is by
+> branch, not by volume: 400 calls covering all 27 observed strata, both passes, in 16,2 s.
+> The shape held — 1 668 raw differences, 1 600 resolved as noise, 4 findings — but nearly all
+> of the noise is resolved by canonicalisation **in code**, not by the classifier, which is
+> what §8 asks for.
+
 **One of the surfaced diffs must be a genuine legacy bug** — e.g. the old procedure applies a promo before VAT in one branch and after VAT in another. The agent flags it, the human decides "preserve, then fix separately", and Parity records that decision. This is the most persuasive thirty seconds of the whole demo: it shows the system finding something humans had missed, and shows it *not* silently fixing it.
 
 ### Screens

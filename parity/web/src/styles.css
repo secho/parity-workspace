@@ -112,12 +112,205 @@ a {
   color: var(--text-faint);
 }
 
-.nav a.later-m5::after {
-  content: "M5";
-}
-
 .nav a.later-m7::after {
   content: "M7";
+}
+
+/* --- decision queue ----------------------------------------------------------- */
+
+/* Compound selector on purpose: `.topline` is declared later in this file and would
+   otherwise win the `display` at equal specificity. */
+.topline.queue-topline {
+  display: block;
+  /* Room for the runtime badge, which is pinned to the top right of the main pane. */
+  padding-right: 280px;
+}
+
+.topline.queue-topline p {
+  margin: 4px 0 0;
+}
+
+.section-head {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  margin: 26px 0 10px;
+}
+
+.queue-item {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  padding: 14px 16px 12px;
+  margin-bottom: 14px;
+}
+
+.queue-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.queue-where {
+  font-size: 14px;
+  color: var(--text);
+}
+
+.queue-proc {
+  margin-left: 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.diff-sides {
+  gap: 12px;
+}
+
+.diff-side {
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  padding: 8px 10px;
+  min-width: 0;
+}
+
+.diff-side h4 {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  margin: 0 0 6px;
+}
+
+/* The left edge is the whole visual grammar of the pane: what it was, what it would become. */
+.diff-old {
+  border-left: 2px solid var(--warn);
+}
+
+.diff-new {
+  border-left: 2px solid var(--accent);
+}
+
+.diff-side pre {
+  margin: 0;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+}
+
+.queue-sample {
+  margin: 10px 0 0;
+  font-size: 12px;
+}
+
+.queue-reasoning {
+  margin-top: 12px;
+  border-left: 2px solid var(--border-strong);
+  padding-left: 12px;
+}
+
+.queue-reasoning h4 {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  margin: 0 0 4px;
+}
+
+.queue-reasoning p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text);
+}
+
+.queue-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.queue-hint {
+  font-size: 11px;
+  flex: 1 1 240px;
+}
+
+.btn {
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 12px;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  cursor: pointer;
+}
+
+.btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.btn-primary {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.btn-quiet {
+  border-color: var(--border);
+  color: var(--text-dim);
+}
+
+/* --- shadow run tab ----------------------------------------------------------- */
+
+.shadow-flow {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: stretch;
+  margin: 14px 0;
+}
+
+.shadow-step {
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  padding: 8px 12px;
+  min-width: 130px;
+}
+
+.shadow-step b {
+  display: block;
+  font-family: var(--mono);
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.shadow-step span {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.shadow-step.resolved b {
+  color: var(--good);
+}
+
+.shadow-step.human b {
+  color: var(--warn);
 }
 
 /* --- runtime badge ----------------------------------------------------------- */
@@ -479,6 +672,8 @@ pre.source {
 .facts dd {
   font-family: var(--mono);
   margin: 2px 0 0;
+  /* Identifiers here can be longer than the column — a database name, a service name. */
+  overflow-wrap: anywhere;
 }
 
 .empty {

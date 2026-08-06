@@ -49,6 +49,7 @@ export const cs = {
       data: 'Data',
       coupling: 'Vazby',
     },
+    shadowTab: 'Shadow runy',
     facts: {
       lines: 'řádků T-SQL',
       invocations: 'volání za 90 dní',
@@ -159,6 +160,75 @@ export const cs = {
     // A violated invariant is a finding about the estate, not a broken oracle. The copy has
     // to say that plainly or the screen reads as "our tooling is failing".
     violationHint: 'Procedura porušuje pravidlo, které sama deklaruje. To není chyba oracle — to je nález.',
+  },
+
+  shadow: {
+    title: 'Shadow runy',
+    empty: 'Zatím žádný shadow run. Spouští se příkazem make shadow-run.',
+    // The sentence the whole beat turns on. Say what actually happens, not what sounds safe.
+    hint:
+      'Zachycená volání se přehrají dvakrát nad obnovenou kopií databáze: jednou původní procedurou, jednou náhradou. ' +
+      'Produkční databáze zůstane nedotčená — shadow spojení se na ni vůbec neotevře.',
+    replayed: 'přehraných volání',
+    strata: 'pokrytých větví',
+    replayTime: 'čas přehrání',
+    perCase: 'na volání',
+    against: 'proti',
+    database: 'databáze',
+    raw: 'hrubých odchylek',
+    resolvedInCode: 'vyřešeno kanonikalizací',
+    reachedModel: 'zbylo na model',
+    // This is the §8 claim made checkable on screen rather than asserted in a doc.
+    resolvedHint:
+      'Vyřešeno v kódu, ještě než cokoliv vidí model: stabilní řazení, normalizace hodin, GUID, identity a zaokrouhlení. ' +
+      'Model tyhle odchylky nikdy neviděl — u žádné z nich není běh agenta.',
+    breakdownTitle: 'Kam odchylky doputovaly',
+    findingsTitle: 'Nálezy',
+    columns: {
+      signature: 'Odchylka',
+      cases: 'Případů',
+      rows: 'Řádků',
+      verdict: 'Verdikt',
+      source: 'Rozhodl',
+      reason: 'Důvod',
+    },
+    sourceCanonicaliser: 'kanonikalizace',
+    sourceModel: 'classify-diff',
+    noise: 'šum',
+    behaviourChange: 'změna chování',
+    unclassified: 'nezařazeno',
+  },
+
+  queue: {
+    title: 'Fronta rozhodnutí',
+    // Deliberately not "dnes": a wall-clock window gives a different number at every
+    // rehearsal, and the sentence is about how much the machine absorbed, not about the date.
+    counter: (raw: string, human: number) => `${raw} odchylek v posledním běhu · ${human} doputovalo k člověku`,
+    resolvedInCode: (n: string) => `${n} z nich vyřešila kanonikalizace v kódu — model je nikdy neviděl`,
+    empty: 'Fronta je prázdná. Žádná změna chování nečeká na rozhodnutí.',
+    emptyNoRun: 'Zatím neproběhl žádný shadow run, takže není co rozhodovat.',
+    openTitle: 'Čeká na rozhodnutí',
+    decidedTitle: 'Rozhodnuto',
+    old: 'Původní procedura',
+    new: 'Náhrada',
+    reasoning: 'Zdůvodnění agenta',
+    affected: (cases: number, rows: number) => `${cases} případů · ${rows} zapsaných řádků`,
+    sample: 'Ukázkové volání',
+    unassigned: 'bez vlastníka',
+    actions: {
+      preserve: 'Zachovat chování',
+      accept: 'Přijmout změnu',
+      escalate: 'Eskalovat',
+    },
+    decided: {
+      preserve: 'zachovat chování',
+      accept: 'přijmout změnu',
+      escalate: 'eskalováno',
+    } as Record<string, string>,
+    undo: 'vrátit',
+    // What "preserve" means here, said plainly, because it is the point of beat 4.
+    preserveHint:
+      'Zachovat chování znamená, že náhrada bude dělat totéž co původní procedura — včetně chyby. Opraví se zvlášť, jako vědomé rozhodnutí.',
   },
 
   steps: {

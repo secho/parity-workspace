@@ -5,14 +5,16 @@ import {
   fetchOracle,
   fetchProcedure,
   fetchRuns,
+  fetchShadow,
   fetchSpec,
   type AgentRunInfo,
   type ColumnAccess,
   type OracleResponse,
   type ProcedureResponse,
+  type ShadowResponse,
 } from '../lib/api';
 
-type Tab = 'source' | 'data' | 'coupling' | 'spec' | 'oracle' | 'steps';
+type Tab = 'source' | 'data' | 'coupling' | 'spec' | 'oracle' | 'shadow' | 'steps';
 
 export function Procedure(): JSX.Element {
   const { name = '' } = useParams();
@@ -22,16 +24,19 @@ export function Procedure(): JSX.Element {
   const [spec, setSpec] = useState<{ markdown: string; createdAt: string } | null>(null);
   const [oracle, setOracle] = useState<OracleResponse | null>(null);
   const [runs, setRuns] = useState<AgentRunInfo[]>([]);
+  const [shadow, setShadow] = useState<ShadowResponse | null>(null);
 
   useEffect(() => {
     setData(null);
     setSpec(null);
     setOracle(null);
     setRuns([]);
+    setShadow(null);
     fetchProcedure(name).then(setData, (err: Error) => setError(err.message));
     void fetchSpec(name).then((r) => setSpec(r.spec), () => undefined);
     void fetchOracle(name).then(setOracle, () => undefined);
     void fetchRuns(name).then((r) => setRuns(r.runs), () => undefined);
+    void fetchShadow(name).then(setShadow, () => undefined);
   }, [name]);
 
   // Agent steps arrive live while a run is in flight. They are persisted as they happen,
@@ -140,6 +145,17 @@ export function Procedure(): JSX.Element {
               style={{ marginLeft: 6 }}
             >
               {oracle.goldenTests.length}
+            </span>
+          )}
+        </button>
+        <button className={tab === 'shadow' ? 'active' : ''} onClick={() => setTab('shadow')}>
+          {cs.procedure.shadowTab}
+          {shadow !== null && shadow.latestRun !== null && (
+            <span
+              className={`chip ${shadow.latestRun.behaviourDiffs > 0 ? 'warn' : 'good'}`}
+              style={{ marginLeft: 6 }}
+            >
+              {shadow.latestRun.behaviourDiffs}
             </span>
           )}
         </button>
@@ -260,6 +276,126 @@ export function Procedure(): JSX.Element {
               <p className="subtle" style={{ marginTop: 10 }}>
                 {cs.oracle.violationHint}
               </p>
+            )}
+          </>
+        ))}
+
+      {tab === 'shadow' &&
+        (shadow === null || shadow.latestRun === null ? (
+          <p className="empty">{cs.shadow.empty}</p>
+        ) : (
+          <>
+            <p className="subtle">{cs.shadow.hint}</p>
+
+            <dl className="facts">
+              <div>
+                <dt>{cs.shadow.replayed}</dt>
+                <dd>{formatInt(shadow.latestRun.casesReplayed)}</dd>
+              </div>
+              <div>
+                <dt>{cs.shadow.strata}</dt>
+                <dd>
+                  {shadow.latestRun.strataCovered}/{shadow.latestRun.strataObserved}
+                </dd>
+              </div>
+              <div>
+                <dt>{cs.shadow.replayTime}</dt>
+                <dd>{((shadow.latestRun.replayMs ?? 0) / 1000).toFixed(1)} s</dd>
+              </div>
+              <div>
+                <dt>{cs.shadow.perCase}</dt>
+                <dd>
+                  {((shadow.latestRun.replayMs ?? 0) / Math.max(1, shadow.latestRun.casesReplayed)).toFixed(0)} ms
+                </dd>
+              </div>
+              <div>
+                <dt>{cs.shadow.against}</dt>
+                <dd>{shadow.latestRun.implementation}</dd>
+              </div>
+              <div>
+                <dt>{cs.shadow.database}</dt>
+                <dd>{shadow.latestRun.shadowDatabase}</dd>
+              </div>
+            </dl>
+
+            {/* The §8 claim, as three numbers: what differed, what code settled, what a human sees. */}
+            <div className="shadow-flow">
+              <div className="shadow-step">
+                <b>{formatInt(shadow.latestRun.rawDiffs)}</b>
+                <span>{cs.shadow.raw}</span>
+              </div>
+              <div className="shadow-step resolved">
+                <b>{formatInt(shadow.latestRun.noiseDiffs)}</b>
+                <span>{cs.shadow.resolvedInCode}</span>
+              </div>
+              <div className="shadow-step human">
+                <b>{formatInt(shadow.latestRun.rawDiffs - shadow.latestRun.noiseDiffs)}</b>
+                <span>{cs.shadow.reachedModel}</span>
+              </div>
+            </div>
+            <p className="subtle">{cs.shadow.resolvedHint}</p>
+
+            <h2 className="section-head">{cs.shadow.breakdownTitle}</h2>
+            <table>
+              <thead>
+                <tr>
+                  <th>{cs.shadow.columns.verdict}</th>
+                  <th>{cs.shadow.columns.source}</th>
+                  <th>{cs.shadow.columns.reason}</th>
+                  <th className="num">{cs.shadow.columns.rows}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {shadow.breakdown.map((row) => (
+                  <tr key={`${row.verdict}-${row.verdictSource}-${row.noiseReason}`}>
+                    <td>
+                      <span className={`chip ${row.verdict === 'behaviour_change' ? 'warn' : 'good'}`}>
+                        {row.verdict === 'behaviour_change'
+                          ? cs.shadow.behaviourChange
+                          : row.verdict === 'noise'
+                            ? cs.shadow.noise
+                            : cs.shadow.unclassified}
+                      </span>
+                    </td>
+                    <td className="mono">
+                      {row.verdictSource === 'canonicaliser' ? cs.shadow.sourceCanonicaliser : cs.shadow.sourceModel}
+                    </td>
+                    <td className="mono">{row.noiseReason ?? cs.common.none}</td>
+                    <td className="num">{formatInt(row.n)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            {shadow.findings.length > 0 && (
+              <>
+                <h2 className="section-head">{cs.shadow.findingsTitle}</h2>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>{cs.shadow.columns.signature}</th>
+                      <th className="num">{cs.shadow.columns.cases}</th>
+                      <th className="num">{cs.shadow.columns.rows}</th>
+                      <th>{cs.queue.reasoning}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {shadow.findings.map((finding) => (
+                      <tr key={finding.signature}>
+                        <td className="mono">{finding.signature}</td>
+                        <td className="num">{finding.cases}</td>
+                        <td className="num">{finding.rowsAffected}</td>
+                        <td>{finding.explanationCs ?? cs.common.none}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <p className="subtle">
+                  <Link className="linkish" to="/fronta">
+                    {cs.queue.title} →
+                  </Link>
+                </p>
+              </>
             )}
           </>
         ))}

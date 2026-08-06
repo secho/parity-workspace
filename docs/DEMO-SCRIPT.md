@@ -25,15 +25,24 @@ Three procedures show zero invocations over 90 days. Run `Smazat mrtvé procedur
 Open `sp_CalculateOrderTotal`.
 
 1. Agent extracts the spec. **Read one paragraph aloud** — it is in Czech and it is comprehensible. That is the point, not the technology.
-2. Agent generates golden tests from captured traffic, plus three invariants.
-3. Agent implements `pricing-service`.
-4. Shadow run: 2 000+ captured calls replayed. Diffs appear. The classifier sorts them. Human-facing count settles at three.
+2. Agent generates golden tests from captured traffic, plus invariants.
+3. Agent implements `pricing-service`. *(M6. Until then the service is hand-written — say so.)*
+4. Shadow run, `Shadow runy` tab: **400 captured calls replayed, 27 of 27 observed branches, 16 s.**
+   Then the three numbers that carry the beat — **1 668 hrubých odchylek → 1 600 vyřešila kanonikalizace → 68 zbylo na model**.
+   Four findings. Say the middle number out loud: the model never saw 96 % of them.
 
-> "Zákazník celou dobu vidí jen výsledek staré procedury. Nová běží naprázdno vedle a její transakce se zahazuje. Produkce se nikdy nedotkne."
+> "Zákazník celou dobu vidí jen výsledek staré procedury. Náhrada běží vedle nad obnovenou kopií databáze — shadow spojení se na produkci vůbec neotevře."
 
 ## Beat 4 — The decision (2 min)
 
-Open the decision queue. Three items. One is the planted legacy bug: promo applied before VAT in one branch, after VAT in another.
+Open the decision queue. Four items, and they are two different stories:
+
+- **The legacy bug** — `TotalVat` and `TotalWithVat`. The 2022 VERNY20 branch computes VAT on
+  `net − promo` where every other branch uses the full net. 32 of 400 cases. `TotalNet` is
+  identical everywhere, which is exactly why nobody ever saw it.
+- **The new one** — the same two columns, one hundredth of a heller apart on 18 orders. The
+  replacement does its arithmetic in floating point and lands on a rounding boundary. Caught
+  before it shipped.
 
 Show the side-by-side. Show the agent's reasoning. Click **Zachovat chování**.
 

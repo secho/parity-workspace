@@ -164,8 +164,75 @@ export interface OracleResponse {
   invariants: InvariantInfo[];
 }
 
+export interface ShadowRunInfo {
+  id: number;
+  status: string;
+  implementation: string;
+  kind: string;
+  shadowDatabase: string;
+  casesPlanned: number;
+  casesReplayed: number;
+  strataCovered: number;
+  strataObserved: number;
+  rawDiffs: number;
+  noiseDiffs: number;
+  behaviourDiffs: number;
+  replayMs: number | null;
+  durationMs: number | null;
+  startedAt: string;
+}
+
+export interface QueueItem {
+  signature: string;
+  procedure: string;
+  shadowRunId: number;
+  scope: string;
+  tableName: string | null;
+  columnName: string | null;
+  cases: number;
+  rowsAffected: number;
+  explanationCs: string | null;
+  ownerTeam: string | null;
+  riskClass: string | null;
+  sample: {
+    sourceInvocationId: number;
+    branchKey: string | null;
+    inputParams: Record<string, unknown>;
+    oldValue: unknown;
+    newValue: unknown;
+  } | null;
+  decision: { action: string; note: string | null; decidedBy: string; decidedAt: string } | null;
+}
+
+export interface ShadowResponse {
+  runs: ShadowRunInfo[];
+  controlRuns: ShadowRunInfo[];
+  latestRun: ShadowRunInfo | null;
+  breakdown: { verdict: string | null; verdictSource: string | null; noiseReason: string | null; n: number }[];
+  findings: QueueItem[];
+}
+
+export interface QueueSummary {
+  latestRun: ShadowRunInfo | null;
+  rawDiffs: number;
+  resolvedInCode: number;
+  reachedHuman: number;
+  decided: number;
+}
+
 async function get<T>(path: string): Promise<T> {
   const response = await fetch(path);
+  if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+  return (await response.json()) as T;
+}
+
+/** The first mutation the UI has needed: the three buttons in the decision queue. */
+async function send<T>(path: string, method: 'POST' | 'DELETE', body?: unknown): Promise<T> {
+  const response = await fetch(path, {
+    method,
+    headers: body === undefined ? undefined : { 'content-type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
   if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
   return (await response.json()) as T;
 }
@@ -183,3 +250,11 @@ export const fetchRuntime = (): Promise<Runtime> => get<Runtime>('/api/runtime')
 export const fetchSkills = (): Promise<{ skillsDir: string; skills: SkillInfo[] }> => get('/api/skills');
 export const fetchPolicy = (): Promise<{ rules: PolicyRuleInfo[] }> => get('/api/policy');
 export const fetchAudit = (): Promise<{ entries: AuditEntryInfo[] }> => get('/api/audit');
+export const fetchShadow = (name: string): Promise<ShadowResponse> =>
+  get<ShadowResponse>(`/api/procedures/${encodeURIComponent(name)}/shadow`);
+export const fetchQueue = (): Promise<{ open: QueueItem[]; decided: QueueItem[] }> => get('/api/queue');
+export const fetchQueueSummary = (): Promise<QueueSummary> => get<QueueSummary>('/api/queue/summary');
+export const decide = (signature: string, action: string, shadowRunId: number): Promise<unknown> =>
+  send(`/api/queue/${encodeURIComponent(signature)}/decision`, 'POST', { action, shadowRunId });
+export const undecide = (signature: string): Promise<unknown> =>
+  send(`/api/queue/${encodeURIComponent(signature)}/decision`, 'DELETE');
