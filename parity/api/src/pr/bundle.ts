@@ -48,7 +48,7 @@ export async function assemblePr(db: Db, config: Config, input: AssembleInput): 
   if (procedure === undefined) return null;
 
   const artifacts = await latestArtifacts(db, procedure.id);
-  if (!isComplete(artifacts)) return null;
+  if (!isComplete(procedure.name, artifacts)) return null;
 
   const [spec] = await db.select().from(specs).where(eq(specs.procedureId, procedure.id));
   const cases = await db.select().from(goldenTests).where(eq(goldenTests.procedureId, procedure.id));

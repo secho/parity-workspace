@@ -24,7 +24,7 @@ export async function serviceRoutes(app: FastifyInstance, db: Db, config: Config
     return {
       procedure: procedure.name,
       artifacts,
-      complete: isComplete(artifacts),
+      complete: isComplete(procedure.name, artifacts),
       agentReady: agentReadiness(),
     };
   });

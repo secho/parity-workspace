@@ -3,7 +3,7 @@ import type { Db } from '../db/client.js';
 import { decisions, goldenTests, invariants, procedures } from '../db/schema.js';
 import type { Config } from '../env.js';
 import { executeRun, implementServiceRun } from '../agent/runner.js';
-import { isComplete, latestArtifacts, nextAttempt, type ArtifactSet } from './artifacts.js';
+import { allowedPathsFor, isComplete, latestArtifacts, nextAttempt, type ArtifactSet } from './artifacts.js';
 
 /**
  * One attempt at writing the replacement.
@@ -19,6 +19,73 @@ import { isComplete, latestArtifacts, nextAttempt, type ArtifactSet } from './ar
  * four hundred replay cases as a 503, and the diff engine reports it as four hundred
  * behavioural differences.
  */
+
+/**
+ * What the shell will import, per procedure, stated verbatim to the agent.
+ *
+ * These mirror the adapter table in the service's `index.ts`. Two statements of one truth, and
+ * that is deliberate: this one is what the agent is asked for, that one is what the container
+ * loads, and a disagreement between them surfaces at adoption rather than four hundred replay
+ * cases into a shadow run.
+ *
+ * The shapes differ because the procedures do. `sp_CalculateOrderTotal` reads into variables and
+ * updates `OrderLedger`, so its **write set is its output** and it returns no result set.
+ * `sp_GetCartSummary` writes nothing and returns two: the cart lines, then a one-row summary.
+ */
+const INTERFACES: Record<string, string> = {
+  sp_CalculateOrderTotal: [
+    '```ts',
+    '// pricing.ts',
+    'export class OrderNotFound extends Error {}',
+    'export interface PricingInput { orderNumber: string; promoCode: string | null; modifiedBy: string }',
+    'export interface Pricing {',
+    '  netSubtotal: number; vatRate: number; promoCode: string | null;',
+    '  promoDiscount: number; loyaltyDiscount: number;',
+    '  totalNet: number; totalVat: number; totalWithVat: number;',
+    '  stackedWithLoyalty: boolean;',
+    '}',
+    'export async function price(pool: sql.ConnectionPool, input: PricingInput, now: Date): Promise<Pricing>',
+    '',
+    '// persist.ts',
+    'export async function persist(pool: sql.ConnectionPool, input: PricingInput, pricing: Pricing, now: Date): Promise<void>',
+    '```',
+    '',
+    'This procedure has no SELECT: it reads into variables and updates OrderLedger, so its write',
+    'set IS its output and price/persist between them must reproduce every column it writes.',
+  ].join('\n'),
+
+  sp_GetCartSummary: [
+    '```ts',
+    '// summary.ts',
+    'export async function summarise(',
+    '  pool: sql.ConnectionPool,',
+    '  params: Record<string, unknown>,',
+    '  now: Date,',
+    '): Promise<{ resultSets: unknown[][] }>',
+    '```',
+    '',
+    'One module and one export. This procedure **writes nothing** — there is no persist step and',
+    'there must not be one; anything your code writes to the database is a behavioural difference.',
+    '',
+    '`params` is the captured input object exactly as the estate recorded it, so read the',
+    'parameter names off the procedure source rather than assuming them.',
+    '',
+    'It returns **two result sets, in this order**: the cart lines, then a one-row summary. Return',
+    'them as `resultSets: [lines, [summary]]`, with each row an object whose keys match the column',
+    'names the procedure SELECTs — the harness compares them column by column.',
+  ].join('\n'),
+
+  default: [
+    '```ts',
+    '// compute.ts',
+    'export async function compute(',
+    '  pool: sql.ConnectionPool,',
+    '  params: Record<string, unknown>,',
+    '  now: Date,',
+    '): Promise<{ resultSets: unknown[][] }>',
+    '```',
+  ].join('\n'),
+};
 
 export interface GenerateInput {
   procedureName: string;
@@ -62,7 +129,7 @@ export async function generateService(db: Db, config: Config, input: GenerateInp
     attempt,
     status: handle.result.isError ? 'failed' : handle.blocked.length > 0 ? 'blocked' : 'succeeded',
     artifacts,
-    complete: isComplete(artifacts),
+    complete: isComplete(input.procedureName, artifacts),
     blocked: handle.blocked,
     costUsd: handle.result.costUsd,
   };
@@ -96,24 +163,10 @@ async function assembleBrief(db: Db, procedureId: number, input: GenerateInput):
     '',
     '## The interface you are writing against',
     '',
-    'The HTTP shell already exists and is not yours to write. It imports exactly two modules',
-    'from the same directory and calls exactly three exports. Match these signatures:',
+    'The HTTP shell already exists and is not yours to write. It imports the modules below from',
+    "your procedure's directory and calls the exports named here. Match these signatures exactly:",
     '',
-    '```ts',
-    '// pricing.ts',
-    'export class OrderNotFound extends Error {}',
-    'export interface PricingInput { orderNumber: string; promoCode: string | null; modifiedBy: string }',
-    'export interface Pricing {',
-    '  netSubtotal: number; vatRate: number; promoCode: string | null;',
-    '  promoDiscount: number; loyaltyDiscount: number;',
-    '  totalNet: number; totalVat: number; totalWithVat: number;',
-    '  stackedWithLoyalty: boolean;',
-    '}',
-    'export async function price(pool: sql.ConnectionPool, input: PricingInput, now: Date): Promise<Pricing>',
-    '',
-    '// persist.ts',
-    'export async function persist(pool: sql.ConnectionPool, input: PricingInput, pricing: Pricing, now: Date): Promise<void>',
-    '```',
+    INTERFACES[input.procedureName] ?? INTERFACES.default,
     '',
     'Import `sql from "mssql"` and nothing else beyond the Node standard library. The container',
     'installs its dependencies at build time, so anything else will not resolve at runtime.',
@@ -148,8 +201,9 @@ async function assembleBrief(db: Db, procedureId: number, input: GenerateInput):
     input.feedback === null
       ? ''
       : ['## What the previous attempt got wrong', '', input.feedback, ''].join('\n'),
-    'Write both files with write_service_file. Write the complete file each time — it is stored',
-    'verbatim and deployed verbatim, not merged with anything.',
+    `Write ${allowedPathsFor(input.procedureName).join(' and ')} with write_service_file. Write the`,
+    'complete file each time — it is stored verbatim and deployed verbatim, not merged with',
+    'anything. No other path will be accepted.',
   ]
     .filter((line) => line !== '')
     .join('\n');

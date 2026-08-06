@@ -8,7 +8,7 @@ import { connect, readCatalog } from '../ingest/mssql.js';
 import { invariantSpec, unknownIdentifiers, type InvariantSpec } from '../oracle/invariants.js';
 import { runShadow } from '../shadow/run.js';
 import { outcomeSignature } from '../capture/signature.js';
-import { ALLOWED_PATHS, nextAttempt, recordArtifact } from '../service/artifacts.js';
+import { allowedPathsFor, nextAttempt, recordArtifact } from '../service/artifacts.js';
 import { assemblePr } from '../pr/bundle.js';
 
 /**
@@ -818,15 +818,24 @@ export function parityTools(context: ToolContext) {
     'write_service_file',
     'Write one source file of the replacement service. Only the business-logic files are writable; the HTTP shell belongs to the migration harness.',
     {
-      path: z
-        .enum(ALLOWED_PATHS)
-        .describe('Which file, relative to the service src/. pricing.ts computes, persist.ts writes.'),
+      // z.string(), not z.enum: the allowed set depends on which procedure the run is for, and
+      // a schema cannot see that. The refusal below is the enforcement — and it is a better one,
+      // because zod would have thrown an opaque schema error the agent could not act on.
+      path: z.string().describe('Which file, relative to the service src/ directory for this procedure.'),
       contents: z.string().describe('The complete file. Node 22 + TypeScript, ESM, importing only fastify and mssql.'),
     },
     async ({ path, contents }) => {
       if (context.procedureName === null) return text('No procedure is under analysis in this run.');
       const [row] = await context.db.select().from(procedures).where(eq(procedures.name, context.procedureName));
       if (row === undefined) return text(`No procedure named ${context.procedureName}.`);
+
+      const allowed = allowedPathsFor(context.procedureName);
+      if (!allowed.includes(path)) {
+        return text(
+          `Refused: ${path} is not part of ${context.procedureName}'s service. Write ${allowed.join(' and ')} — ` +
+            'index.ts and db.ts are the migration harness\'s contract and belong to the platform.',
+        );
+      }
 
       // Imports are checked here too. The container installs its dependencies at build time,
       // so a service that reaches for a package nobody installed does not fail at review — it
