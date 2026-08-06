@@ -1104,3 +1104,33 @@ the property it names was true.
 Now counted as `COUNT(DISTINCT agent_run_id)` over the diffs of that shadow run. The lesson is
 the one this milestone kept relearning: a gate assertion has to be scoped to the thing it
 claims to measure, or it is measuring the fixture.
+
+## 2026-08-06 · The queue listed every shadow run's findings, not the latest one's
+Found in use, not in review, which is the only reason it was found at all.
+
+Jan ran `make shadow-run`, went to the queue, and clicked through it. The decisions were
+recorded correctly — and he had to make eight of them for four findings, because three shadow
+runs existed and `GET /api/queue` aggregated all of them.
+
+A finding's `signature` names the *shape* of a difference — `write_set:OrderLedger.TotalVat:material` —
+so it recurs identically in every run that reproduces it. `itemsFor(db, null)` had no run
+scoping, so each finding appeared once per run, React was handed duplicate keys, and the
+number in the header counted work that had already been done. This is the third time the same
+mistake has been made in this file: `classify_diff` and the decision undo were both fixed for
+it during the build. Anything keyed on a signature has to say which run it means.
+
+`null` now means "the newest succeeded run of each procedure" rather than "every run of every
+procedure". Superseded runs keep their rows and their decisions; they simply stop being what
+the queue asks about. Two checks in `verify-m5` cover it — no signature may appear twice, and
+every item shown must belong to its procedure's newest run.
+
+## 2026-08-06 · The gate assumed nobody had used the queue yet
+The same session exposed a second defect, in `verify-m5` rather than in the product. Its
+decision-button check took `queue.open[0]` and pressed it, which crashes once a human has
+decided everything — the normal state after a demo, not an exceptional one. A gate that only
+runs before anyone has touched the thing it gates is not much of a gate.
+
+It now works from whatever state the queue is in: it decides an already-decided item if that
+is all there is, and restores the prior decision — not just deletes it — in the `finally`.
+Silently clearing a recorded human decision is exactly the damage `verify-m2` established a
+gate must not be able to do.

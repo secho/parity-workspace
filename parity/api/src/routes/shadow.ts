@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull, sql as raw } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, sql as raw } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import type { Db } from '../db/client.js';
 import { decisions, diffs, procedures, shadowCases, shadowRuns } from '../db/schema.js';
@@ -38,8 +38,43 @@ interface QueueItem {
   decision: { action: string; note: string | null; decidedBy: string; decidedAt: Date } | null;
 }
 
-/** Every behaviour_change finding of a run, with its decision if one has been taken. */
+/**
+ * The newest succeeded shadow run of each procedure.
+ *
+ * The queue shows work, not an archive. A finding's `signature` names the *shape* of a
+ * difference — `write_set:OrderLedger.TotalVat:material` — so it recurs identically in every
+ * run that reproduces it, and an unscoped queue therefore listed the same finding once per
+ * run. A human re-running a shadow run then had to decide everything twice, and React was
+ * handed duplicate keys into the bargain.
+ *
+ * Found in use rather than in review: three runs existed, four findings each, and the queue
+ * asked for eight decisions. The same scoping mistake had already been fixed in
+ * `classify_diff` and in the decision undo — anything keyed on a signature has to say which
+ * run it means.
+ *
+ * A superseded run keeps its rows and its decisions; it simply stops being the thing the
+ * queue asks about.
+ */
+async function latestRunIds(db: Db): Promise<number[]> {
+  const rows = await db
+    .select({ id: shadowRuns.id, procedureId: shadowRuns.procedureId })
+    .from(shadowRuns)
+    .where(and(eq(shadowRuns.kind, 'shadow'), eq(shadowRuns.status, 'succeeded')))
+    .orderBy(desc(shadowRuns.id));
+
+  const seen = new Set<number>();
+  return rows.filter((row) => !seen.has(row.procedureId) && seen.add(row.procedureId)).map((row) => row.id);
+}
+
+/**
+ * Every behaviour_change finding, with its decision if one has been taken.
+ *
+ * `shadowRunId === null` means "the estate", which is the latest run of every procedure —
+ * never every run of every procedure.
+ */
 async function itemsFor(db: Db, shadowRunId: number | null): Promise<QueueItem[]> {
+  const scope = shadowRunId === null ? await latestRunIds(db) : [shadowRunId];
+  if (scope.length === 0) return [];
   const rows = await db
     .select({
       signature: diffs.signature,
@@ -59,11 +94,7 @@ async function itemsFor(db: Db, shadowRunId: number | null): Promise<QueueItem[]
     .from(diffs)
     .innerJoin(shadowRuns, eq(shadowRuns.id, diffs.shadowRunId))
     .innerJoin(procedures, eq(procedures.id, shadowRuns.procedureId))
-    .where(
-      shadowRunId === null
-        ? eq(diffs.verdict, 'behaviour_change')
-        : and(eq(diffs.verdict, 'behaviour_change'), eq(diffs.shadowRunId, shadowRunId)),
-    )
+    .where(and(eq(diffs.verdict, 'behaviour_change'), inArray(diffs.shadowRunId, scope)))
     .groupBy(
       diffs.signature,
       diffs.shadowRunId,
