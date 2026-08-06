@@ -25,6 +25,9 @@ import {
  * audience without spending seven dollars to show it working.
  */
 
+/** The second procedure — the one with a generated service, so its lane can finish. */
+const MIGRATION_DEFAULT = 'sp_GetCartSummary';
+
 const ITEM_TONE: Record<string, string> = {
   pending: 'none',
   running: 'warn',
@@ -101,7 +104,11 @@ export function Kampane(): JSX.Element {
     void fetchEstate().then((estate) => {
       const names = estate.procedures.map((p) => p.name).sort();
       setProcedureNames(names);
-      setTarget((current) => (current === '' ? (names[0] ?? '') : current));
+      // Defaults to the procedure that has a service to replay against, not to whichever name
+      // sorts first. The migration campaign ends in a shadow run, and a shadow run against a
+      // procedure the generated service does not serve is refused — correctly, and loudly, but
+      // it is not a thing to discover by clicking `Spustit` in front of a room.
+      setTarget((current) => (current === '' ? (names.find((n) => n === MIGRATION_DEFAULT) ?? names[0] ?? '') : current));
     }, () => undefined);
   }, []);
 
