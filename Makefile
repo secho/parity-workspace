@@ -1,4 +1,4 @@
-.PHONY: up down seed seed-checksum traffic traffic-checksum ingest demo-reset map-estate \
+.PHONY: up down remount seed seed-checksum traffic traffic-checksum ingest demo-reset map-estate \
         verify-m0 verify-m1 verify-m2 verify-m3 verify-m4 verify-m5 verify-m6 verify-m7
 
 # Waits only for the containers that must exist BEFORE seeding. shop-api's health
@@ -15,6 +15,20 @@ up:
 
 down:
 	docker compose down -v
+
+# Re-resolve the source bind mounts after a git operation that recreated the mounted
+# directories — `git checkout` of a branch that lacks parity/*/src deletes them, and the
+# running containers keep pointing at the deleted inode. The web app goes white ("Failed
+# to load url /src/main.tsx") and the API keeps reporting HEALTHY because tsx already has
+# the code in memory, so nothing looks wrong until the next process starts. Run this after
+# any branch switch.
+remount:
+	docker compose up -d --force-recreate parity-api parity-web
+	@printf "waiting for parity-api"
+	@until [ "$$(docker inspect -f '{{.State.Health.Status}}' parity-api 2>/dev/null)" = "healthy" ]; do printf "."; sleep 2; done
+	@echo " healthy"
+	@docker compose exec -T parity-api ls /app/src >/dev/null 2>&1 && echo "  api mount ok" || { echo "  api mount STILL EMPTY"; exit 1; }
+	@docker compose exec -T parity-web ls /app/src >/dev/null 2>&1 && echo "  web mount ok" || { echo "  web mount STILL EMPTY"; exit 1; }
 
 seed:
 	npm --prefix parity-platform-demo-app/seed install --silent

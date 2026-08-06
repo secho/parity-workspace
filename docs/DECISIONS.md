@@ -414,3 +414,19 @@ bundled ones (`doctor`, `loop`, `run`, …). The `skills: [name]` option is a co
 so the model only ever sees the one skill enabled for that run, and the Provoz page lists
 the five real files on disk. Recorded because "the agent loads exactly our five skills" is
 a stronger claim than the init message supports, and someone will read that array on stage.
+
+## 2026-08-06 · A branch switch silently breaks the running stack
+Checking out a branch that does not contain `parity/api/src` or `parity/web/src` deletes
+those directories, and the running containers keep their bind mounts pointed at the deleted
+inode. Recreating the files on the next checkout does not re-resolve the mount. The failure
+is quiet in the worst way: the web app serves HTTP 200 and renders a **white screen**
+(`Failed to load url /src/main.tsx` appears only in the container log), and `parity-api`
+keeps reporting **healthy** because `tsx` already holds the code in memory — while `/app/src`
+inside it is empty and the next `docker compose exec` would fail.
+
+Hit while fast-forwarding `main` after merging M3: local `main` was twelve commits behind
+and did not yet contain `parity/`, so the checkout deleted both trees before the merge put
+them back. `make remount` force-recreates the two containers and then asserts both mounts
+are non-empty, so the recovery is one command and the check cannot pass on a stale mount.
+Branch switching is normal during a demo; a white screen at beat 1 with a healthy API is a
+bad thing to debug in the room.
