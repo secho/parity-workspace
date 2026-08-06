@@ -2,15 +2,17 @@ import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { cs, formatDate, formatInt } from '../copy';
 import {
+  fetchOracle,
   fetchProcedure,
   fetchRuns,
   fetchSpec,
   type AgentRunInfo,
   type ColumnAccess,
+  type OracleResponse,
   type ProcedureResponse,
 } from '../lib/api';
 
-type Tab = 'source' | 'data' | 'coupling' | 'spec' | 'steps';
+type Tab = 'source' | 'data' | 'coupling' | 'spec' | 'oracle' | 'steps';
 
 export function Procedure(): JSX.Element {
   const { name = '' } = useParams();
@@ -18,14 +20,17 @@ export function Procedure(): JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('source');
   const [spec, setSpec] = useState<{ markdown: string; createdAt: string } | null>(null);
+  const [oracle, setOracle] = useState<OracleResponse | null>(null);
   const [runs, setRuns] = useState<AgentRunInfo[]>([]);
 
   useEffect(() => {
     setData(null);
     setSpec(null);
+    setOracle(null);
     setRuns([]);
     fetchProcedure(name).then(setData, (err: Error) => setError(err.message));
     void fetchSpec(name).then((r) => setSpec(r.spec), () => undefined);
+    void fetchOracle(name).then(setOracle, () => undefined);
     void fetchRuns(name).then((r) => setRuns(r.runs), () => undefined);
   }, [name]);
 
@@ -127,6 +132,17 @@ export function Procedure(): JSX.Element {
         <button className={tab === 'spec' ? 'active' : ''} onClick={() => setTab('spec')}>
           {cs.spec.title}
         </button>
+        <button className={tab === 'oracle' ? 'active' : ''} onClick={() => setTab('oracle')}>
+          {cs.oracle.title}
+          {oracle !== null && oracle.goldenTests.length > 0 && (
+            <span
+              className={`chip ${oracle.goldenTests.some((g) => g.status === 'fail') ? 'bad' : 'good'}`}
+              style={{ marginLeft: 6 }}
+            >
+              {oracle.goldenTests.length}
+            </span>
+          )}
+        </button>
         <button className={tab === 'steps' ? 'active' : ''} onClick={() => setTab('steps')}>
           {cs.steps.title}
           {runs.length > 0 && <span className="chip none" style={{ marginLeft: 6 }}>{runs.length}</span>}
@@ -140,6 +156,111 @@ export function Procedure(): JSX.Element {
           <>
             <p className="subtle">{cs.spec.generatedAt(new Date(spec.createdAt).toLocaleString('cs-CZ'))}</p>
             <div className="spec">{spec.markdown}</div>
+          </>
+        ))}
+
+      {tab === 'oracle' &&
+        (oracle === null || oracle.goldenTests.length === 0 ? (
+          <p className="empty">{cs.oracle.empty}</p>
+        ) : (
+          <>
+            <h2>{cs.oracle.goldenTitle}</h2>
+            <p className="subtle">
+              {cs.oracle.goldenHint}
+              {oracle.latestRun !== null && (
+                <>
+                  {' · '}
+                  {cs.oracle.passRate(oracle.latestRun.goldenPassed, oracle.latestRun.goldenPassed + oracle.latestRun.goldenFailed)}
+                </>
+              )}
+            </p>
+            <table>
+              <thead>
+                <tr>
+                  <th>{cs.oracle.goldenTitle}</th>
+                  <th>{cs.oracle.branch}</th>
+                  <th>{cs.oracle.source}</th>
+                  <th>{cs.oracle.normalised}</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {oracle.goldenTests.map((test) => (
+                  <tr key={test.id}>
+                    <td className="name">
+                      <span className="mono">{test.name}</span>
+                      {test.rationale !== null && <div className="subtle">{test.rationale}</div>}
+                      {test.status === 'fail' && test.detail !== null && (
+                        <div className="subtle mono">{test.detail}</div>
+                      )}
+                    </td>
+                    <td className="mono subtle">{test.branchKey ?? '—'}</td>
+                    {/* Provenance, on screen. Every case points at the call it came from. */}
+                    <td className="mono subtle">#{test.sourceInvocationId}</td>
+                    <td className="mono subtle">{test.normalisations.join(' ') || '—'}</td>
+                    <td>
+                      <span
+                        className={`chip ${test.status === 'pass' ? 'good' : test.status === null ? 'none' : 'bad'}`}
+                      >
+                        {test.status === 'pass' ? cs.oracle.pass : test.status === null ? cs.oracle.notRun : cs.oracle.fail}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <h2>{cs.oracle.invariantsTitle}</h2>
+            <p className="subtle">{cs.oracle.invariantsHint}</p>
+            <table>
+              <thead>
+                <tr>
+                  <th>{cs.oracle.invariantsTitle}</th>
+                  <th className="num">{cs.oracle.checks}</th>
+                  <th className="num">{cs.oracle.violations}</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {oracle.invariants.map((rule) => (
+                  <tr key={rule.id}>
+                    <td className="name">
+                      <span className="mono">{rule.name}</span>
+                      {rule.rationale !== null && <div className="subtle">{rule.rationale}</div>}
+                      {rule.firstViolation !== null && <div className="subtle mono">{rule.firstViolation}</div>}
+                    </td>
+                    <td className="num">{rule.evaluable ? rule.casesChecked : '—'}</td>
+                    <td className="num">{rule.evaluable ? rule.casesViolated : '—'}</td>
+                    <td>
+                      {!rule.evaluable ? (
+                        <span className="chip none" title={cs.oracle.advisoryHint}>
+                          {cs.oracle.advisory}
+                        </span>
+                      ) : rule.casesChecked === 0 ? (
+                        // Not the same as "broken everywhere". A pure read writes nothing, so
+                        // a write-set rule has no rows to walk and has asserted nothing yet.
+                        <span className="chip none" title={cs.oracle.notEvaluatedHint}>
+                          {cs.oracle.notEvaluated}
+                        </span>
+                      ) : !rule.confirmed ? (
+                        // Broken nearly everywhere: a mis-stated rule, not a finding. Shown
+                        // with its counts rather than hidden — it is still a lead.
+                        <span className="chip none" title={cs.oracle.unconfirmedHint}>
+                          {cs.oracle.unconfirmed}
+                        </span>
+                      ) : (
+                        <span className={`chip ${rule.casesViolated > 0 ? 'warn' : 'good'}`}>{rule.kind}</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {oracle.invariants.some((r) => r.confirmed && r.casesViolated > 0) && (
+              <p className="subtle" style={{ marginTop: 10 }}>
+                {cs.oracle.violationHint}
+              </p>
+            )}
           </>
         ))}
 

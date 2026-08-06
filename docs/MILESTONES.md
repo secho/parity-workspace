@@ -55,12 +55,44 @@ Update the checkboxes as you go. This file is the handoff between sessions.
 **Open:** nine of fourteen procedures are `nondet`, so `chybí seam` carries 25 646 of 45 297 invocations. Accurate but a weak roadmap — see the open entry in `docs/DECISIONS.md` on splitting the blocker by seam kind.
 
 ## M4 — Oracle
-- [ ] `generate-oracle` produces golden tests from captured invocations
-- [ ] Invariants proposed for `sp_CalculateOrderTotal` (total identity, non-negative, VAT rate table)
-- [ ] Golden tests execute against the current procedure and pass
-- [ ] Coverage number on Estate is real and **invocation-weighted**
+- [x] `generate-oracle` produces golden tests from captured invocations — **90 cases over 10
+      procedures**, each citing an `InvocationID` whose inputs the gate re-reads and compares
+      byte for byte, so the agent cannot supply parameters of its own
+- [x] Invariants proposed for `sp_CalculateOrderTotal` (total identity, non-negative, VAT rate
+      table) — 9 of them, in a closed vocabulary and **evaluated in code**, 41 checks
+- [x] Golden tests execute against the current procedure and pass — **10 of 10 suites green**,
+      identical across two consecutive runs, inside a transaction that always rolls back under
+      a `parity_runner` login with EXECUTE, no DDL, and a DENY on `sp_SyncWarehouseDispatch`
+- [x] Coverage number on Estate is real and **invocation-weighted** — 99,89% weighted against
+      71,43% counted. The math already existed and was correct; M4 is what makes `oracle_state`
+      move
+- [x] The oracle finds the planted promo/VAT defect: a derived rate of **0,168** against a rate
+      table of {0,10 · 0,15 · 0,20 · 0,21}, in 2 of 41 checks — a minority, so a finding rather
+      than a mis-stated rule — while the totals identity stays clean, which is why fifteen
+      years of self-consistency checks never saw it
 
-`make verify-m4` — asserts golden tests exist and pass for at least 8 procedures, coverage math is weighted not counted.
+`make generate-oracles`: 10 procedures, 2 012 s, $4,85. The three dead procedures and
+`sp_SyncWarehouseDispatch` are skipped and the gate asserts they have no cases.
+
+**Coverage reads 99,89% only after a full sweep.** Beat 1 opens after `demo-reset` at zero and
+beat 3 builds one procedure's oracle live, so the number the room sees moves by
+`sp_CalculateOrderTotal`'s real share of traffic, not from nothing to nearly everything.
+
+**Branch coverage is enforced on the migration target and reported elsewhere** — 5/5 for
+`sp_CalculateOrderTotal`, 11/11 for `sp_PlaceOrder`, 6/20 for `sp_ApplyPromoCode`. An
+incomplete suite is shown as a number rather than failed or rounded up.
+
+`make generate-oracles` — one live model run per procedure with traffic to draw on, then a
+baseline pass and a verify pass. Separate from the gate, like `map-estate`.
+
+`make verify-m4` — **40 checks**. Asserts golden tests exist and pass for at least 8 procedures, that every
+case traces to a real sampled invocation with byte-identical inputs, that the estate is
+byte-identical after every replay, that a one-unit corruption turns the suite red, that the
+rate invariant is violated in a *minority* of cases (a finding, not a mis-stated rule), and
+that coverage math is weighted not counted.
+
+**Gate order matters:** `demo-reset → map-estate → verify-m3 → generate-oracles → verify-m4`.
+`verify-m3` asserts coverage is still zero, which stops being true once oracles exist.
 
 ## M5 — Shadow harness  ⚠ the hard one
 - [ ] Snapshot database restore; replay runs in a transaction that always rolls back

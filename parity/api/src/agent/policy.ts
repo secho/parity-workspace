@@ -33,10 +33,23 @@ export const DEFAULT_POLICY: { taskClass: string; toolName: string; tier: number
   { taskClass: 'spec', toolName: 'mcp__parity__write_spec', tier: 2, requiresHuman: false, note: 'zápis specifikace' },
   { taskClass: 'spec', toolName: 'mcp__parity__write_triage', tier: 3, requiresHuman: true, note: 'mimo rozsah extract-spec' },
 
+  // Building an oracle reads the source, the traffic and the candidate cases, and writes two
+  // things: the chosen cases and the invariants. It may not reclassify the procedure and it
+  // may not rewrite the spec — an oracle that could edit the specification it is being
+  // measured against would be marking its own homework.
+  { taskClass: 'oracle', toolName: 'mcp__parity__read_procedure', tier: 1, requiresHuman: false, note: 'čtení zdroje procedury' },
+  { taskClass: 'oracle', toolName: 'mcp__parity__query_capture', tier: 1, requiresHuman: false, note: 'čtení zachyceného provozu' },
+  { taskClass: 'oracle', toolName: 'mcp__parity__list_capture_cases', tier: 1, requiresHuman: false, note: 'kandidátní případy z provozu' },
+  { taskClass: 'oracle', toolName: 'mcp__parity__write_golden_tests', tier: 2, requiresHuman: false, note: 'zápis golden testů' },
+  { taskClass: 'oracle', toolName: 'mcp__parity__write_invariants', tier: 2, requiresHuman: false, note: 'zápis invariantů' },
+  { taskClass: 'oracle', toolName: 'mcp__parity__write_triage', tier: 3, requiresHuman: true, note: 'mimo rozsah generate-oracle' },
+  { taskClass: 'oracle', toolName: 'mcp__parity__write_spec', tier: 3, requiresHuman: true, note: 'mimo rozsah generate-oracle' },
+
   // Nothing opens a PR or records a decision without a person. Wired at M6/M7; the rule
   // exists now so the tier table on the Provoz page is the real one from the start.
   { taskClass: 'triage', toolName: 'mcp__parity__open_pr', tier: 3, requiresHuman: true, note: 'PR vždy přes člověka' },
   { taskClass: 'spec', toolName: 'mcp__parity__open_pr', tier: 3, requiresHuman: true, note: 'PR vždy přes člověka' },
+  { taskClass: 'oracle', toolName: 'mcp__parity__open_pr', tier: 3, requiresHuman: true, note: 'PR vždy přes člověka' },
 ];
 
 export async function seedPolicy(db: Db): Promise<void> {

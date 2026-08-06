@@ -123,6 +123,47 @@ export interface AgentRunInfo {
   steps: AgentStepInfo[];
 }
 
+export interface GoldenTestInfo {
+  id: number;
+  name: string;
+  branchKey: string | null;
+  sourceInvocationId: number;
+  inputParams: unknown;
+  normalisations: string[];
+  rationale: string | null;
+  /** pass | fail | error, or null if the suite has not been run since this case was added. */
+  status: string | null;
+  detail: string | null;
+}
+
+export interface InvariantInfo {
+  id: number;
+  name: string;
+  kind: string;
+  evaluable: boolean;
+  rationale: string | null;
+  casesChecked: number;
+  casesViolated: number;
+  firstViolation: string | null;
+  /** Derived: a rule broken by most of what it checked is not describing this procedure. */
+  confirmed: boolean;
+}
+
+export interface OracleResponse {
+  latestRun: {
+    id: number;
+    kind: string;
+    goldenPassed: number;
+    goldenFailed: number;
+    invariantsChecked: number;
+    invariantsViolated: number;
+    durationMs: number | null;
+    startedAt: string;
+  } | null;
+  goldenTests: GoldenTestInfo[];
+  invariants: InvariantInfo[];
+}
+
 async function get<T>(path: string): Promise<T> {
   const response = await fetch(path);
   if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
@@ -134,6 +175,8 @@ export const fetchProcedure = (name: string): Promise<ProcedureResponse> =>
   get<ProcedureResponse>(`/api/procedures/${encodeURIComponent(name)}`);
 export const fetchSpec = (name: string): Promise<{ spec: { markdown: string; createdAt: string } | null }> =>
   get(`/api/procedures/${encodeURIComponent(name)}/spec`);
+export const fetchOracle = (name: string): Promise<OracleResponse> =>
+  get<OracleResponse>(`/api/procedures/${encodeURIComponent(name)}/oracle`);
 export const fetchRuns = (name: string): Promise<{ runs: AgentRunInfo[] }> =>
   get(`/api/procedures/${encodeURIComponent(name)}/runs`);
 export const fetchRuntime = (): Promise<Runtime> => get<Runtime>('/api/runtime');

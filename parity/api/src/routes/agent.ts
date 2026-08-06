@@ -3,7 +3,8 @@ import type { FastifyInstance } from 'fastify';
 import type { Db } from '../db/client.js';
 import { agentRuns, agentSteps, procedures, specs } from '../db/schema.js';
 import { agentReadiness, type Config } from '../env.js';
-import { executeRun, specRun, triageRun } from '../agent/runner.js';
+import { executeRun, oracleRun, specRun, triageRun } from '../agent/runner.js';
+import { recordBaseline, runSuite } from '../oracle/suite.js';
 
 /**
  * Agent runs, and their steps streaming to the UI.
@@ -21,7 +22,7 @@ const listeners = new Map<string, Set<Listener>>();
 export async function agentRoutes(app: FastifyInstance, db: Db, config: Config): Promise<void> {
   const start = async (
     procedureName: string,
-    kind: 'triage' | 'spec',
+    kind: 'triage' | 'spec' | 'oracle',
   ): Promise<{ runId: string; status: number; body: unknown }> => {
     const readiness = agentReadiness();
     if (!readiness.ready) {
@@ -29,7 +30,8 @@ export async function agentRoutes(app: FastifyInstance, db: Db, config: Config):
       return { runId: '', status: 503, body: { error: 'agent not configured', reason: readiness.reason } };
     }
 
-    const request = kind === 'triage' ? triageRun(procedureName) : specRun(procedureName);
+    const request =
+      kind === 'triage' ? triageRun(procedureName) : kind === 'spec' ? specRun(procedureName) : oracleRun(procedureName);
     const handle = await executeRun(db, config, request, (step) => {
       for (const listener of listeners.get(procedureName) ?? []) listener(step);
     });
@@ -57,6 +59,22 @@ export async function agentRoutes(app: FastifyInstance, db: Db, config: Config):
   app.post<{ Params: { name: string } }>('/api/procedures/:name/spec', async (request, reply) => {
     const result = await start(request.params.name, 'spec');
     return reply.code(result.status).send(result.body);
+  });
+
+  /**
+   * Build the oracle, then record the baseline and check it straight away.
+   *
+   * The model chooses cases and states invariants; it never executes anything. Recording the
+   * expectation is Parity's job, and doing it here rather than leaving it for a later command
+   * means a run that returns has either produced a working oracle or reported why not.
+   */
+  app.post<{ Params: { name: string } }>('/api/procedures/:name/oracle', async (request, reply) => {
+    const result = await start(request.params.name, 'oracle');
+    if (result.status !== 200) return reply.code(result.status).send(result.body);
+
+    const cases = await recordBaseline(db, config, request.params.name);
+    const suite = cases === 0 ? null : await runSuite(db, config, request.params.name, 'verify');
+    return reply.code(200).send({ ...(result.body as object), cases, suite });
   });
 
   /** The specification, for the Procedura → Specifikace tab. */

@@ -129,6 +129,12 @@ services:
       # cannot write to the estate it analyses — a permission grant rather than a promise.
       MSSQL_USER: "${PARITY_READER_USER:-parity_reader}"
       MSSQL_SA_PASSWORD: "${PARITY_READER_PASSWORD:-Parity_Reader_2026!}"
+      # The one principal that may EXECUTE, used only by M4's oracle harness and always
+      # inside a transaction that is rolled back. It has no DDL and is DENYed
+      # sp_SyncWarehouseDispatch — a sent email cannot be rolled back, which is the same
+      # reason that procedure is classified `external` and can never be shadowed.
+      PARITY_RUNNER_USER: "${PARITY_RUNNER_USER:-parity_runner}"
+      PARITY_RUNNER_PASSWORD: "${PARITY_RUNNER_PASSWORD:-Parity_Runner_2026!}"
       PORT: "3000"
       PARITY_MODE: "${PARITY_MODE:-live}"
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
