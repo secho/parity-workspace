@@ -252,6 +252,61 @@ export const fetchPolicy = (): Promise<{ rules: PolicyRuleInfo[] }> => get('/api
 export const fetchAudit = (): Promise<{ entries: AuditEntryInfo[] }> => get('/api/audit');
 export const fetchShadow = (name: string): Promise<ShadowResponse> =>
   get<ShadowResponse>(`/api/procedures/${encodeURIComponent(name)}/shadow`);
+export interface DecisionRecord {
+  id: number;
+  signature: string;
+  action: string;
+  note: string | null;
+  decidedBy: string;
+  decidedAt: string;
+  shadowRunId: number;
+  implementation: string;
+}
+
+export interface PullRequestRecord {
+  id: number;
+  status: string;
+  owner: string;
+  repo: string;
+  baseBranch: string;
+  branch: string;
+  title: string;
+  body: string;
+  files: { path: string }[];
+  artifactHash: string;
+  number: number | null;
+  url: string | null;
+  error: string | null;
+  createdAt: string;
+  openedAt: string | null;
+}
+
+export interface ServiceArtifactSet {
+  attempt: number;
+  runHash: string;
+  files: { path: string; contents: string; sha256: string }[];
+}
+
+/**
+ * By procedure, not by the latest run.
+ *
+ * A decision outlives the run that provoked it. Scoping this to the newest run — which the
+ * queue does, correctly, because the queue shows work — would empty this list the moment the
+ * generated service replays green, which is precisely when someone wants to read it.
+ */
+export const fetchDecisions = (name: string): Promise<{ decisions: DecisionRecord[] }> =>
+  get(`/api/procedures/${encodeURIComponent(name)}/decisions`);
+
+export const fetchService = (
+  name: string,
+): Promise<{ artifacts: ServiceArtifactSet | null; complete: boolean }> =>
+  get(`/api/procedures/${encodeURIComponent(name)}/service`);
+
+export const fetchPullRequest = (
+  name: string,
+): Promise<{ latest: PullRequestRecord | null; readiness: { ready: boolean; reason: string | null; reasonCode: string | null } }> =>
+  get(`/api/procedures/${encodeURIComponent(name)}/pr`);
+
 export const fetchQueue = (): Promise<{ open: QueueItem[]; decided: QueueItem[] }> => get('/api/queue');
 export const fetchQueueSummary = (): Promise<QueueSummary> => get<QueueSummary>('/api/queue/summary');
 export const decide = (signature: string, action: string, shadowRunId: number): Promise<unknown> =>

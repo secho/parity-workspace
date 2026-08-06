@@ -1134,3 +1134,216 @@ It now works from whatever state the queue is in: it decides an already-decided 
 is all there is, and restores the prior decision — not just deletes it — in the `finally`.
 Silently clearing a recorded human decision is exactly the damage `verify-m2` established a
 gate must not be able to do.
+
+---
+
+# M6 — service and PR
+
+## 2026-08-06 · The generated service cannot be the source of the demo's findings
+The plan for M6 assumed `implement-service` would produce a service that diverges from the
+procedure, because it implements what the spec says while the procedure does something
+undocumented in one branch. That assumption is false, and it was checked against the live
+database rather than argued about: the M3 spec for `sp_CalculateOrderTotal` documents the
+planted VAT defect three times over — `Chování` §12 gives the stacking branch by name and by
+formula, `Invarianty` states both VAT bases as a rule, and `Otevřené otázky` flags it as
+*"Nekonzistentní základ DPH mezi stacking a nestacking větví"*.
+
+That is `skills/extract-spec/SKILL.md` working exactly as written — *describe what it does, not
+what it should do*. The spec is a faithful reimplementation guide, so a spec-faithful service
+reproduces the defect and its shadow run is green on the first try. What it would produce
+instead is a scatter of accidental divergences — float rounding, NULL handling, fallback
+ordering — different on every generation, which hard rule 5 forbids and which would make the
+number of items in the decision queue a function of what a model wrote that morning.
+
+## 2026-08-06 · The hand-written service stays, as the reference implementation
+So the milestone inverts. M5's hand-written service was recorded as a stub for M6 to replace;
+it is now permanent, and it is the harness's **positive control** — the only implementation
+that diverges from the procedure, and therefore the standing proof that the diff engine can
+still find a real behavioural difference. The generated service is the one that goes green.
+
+This supersedes two recorded intents: the comment at `docker-compose.yml` saying M6 replaces
+the source in place, and the M5 entry above saying the same. Both are rewritten.
+
+A green run against the generated service means nothing on its own; it means something beside
+a red one produced by the same harness, the same case set and the same database on the same
+day. `verify-m6` asserts both, and `shadow_runs.implementation_id` is what lets each gate pin
+to its own run — `verify-m5` to `reference`, `verify-m6` to `generated`.
+
+It also makes the stage line stronger. Not *"the agent wrote a buggy service"*, which invites
+"so your agent is unreliable?", but *the platform compared two implementations of one rule,
+found a fifteen-year-old bug neither author knew about, refused to fix it silently, and then
+produced the implementation that preserves it — with proof.*
+
+## 2026-08-06 · The generated source reaches disk through Postgres, not a bind mount
+parity-api has no mount into `parity-platform-demo-app` and does not get one. The reason is the
+policy layer rather than tidiness: `decide()` waves through every tool whose name is not
+prefixed `mcp__parity__`, and the SDK's built-in `Write` is exactly that. A write mount would
+hand the agent a capability the tier table does not govern, does not display on the Provoz page
+and cannot refuse — in the one milestone whose whole claim is that the platform gates what the
+agent does.
+
+There is a duller second reason. `client.ts` disposes the run workspace in a `finally`, so
+anything written with the SDK's file tools is gone the moment the run ends. Whatever the agent
+produces has to be captured *during* the run either way.
+
+So the agent calls `write_service_file`, the bytes land in `service_artifacts`, and a host-side
+`make adopt-service` materialises them over HTTP. Three consequences worth having: the source is
+versioned per attempt, `demo-reset` removes it by cascade like everything else, and `open_pr`
+reads the same rows the shadow run replayed, so the PR cannot drift from what was measured.
+
+## 2026-08-06 · The agent writes the rules, the platform owns the shell
+`write_service_file` accepts `pricing.ts` and `persist.ts` and refuses everything else.
+`index.ts` and `db.ts` are the shadow harness's contract — `/replay/<proc>` taking the captured
+parameters verbatim, `/health`, and the `/_admin/disconnect` handshake that keeps a revert at
+530 ms instead of an unbounded wait. No specification describes any of them, and the failure
+mode of re-deriving the route shape is four hundred replay cases returning 404, which the diff
+engine would faithfully report as four hundred behavioural differences.
+
+Said out loud rather than hidden: the agent wrote the pricing rules and the writes, the HTTP
+shell is the migration harness's contract. The tool also refuses any import outside `fastify`,
+`mssql` and the Node standard library, because the container installs its dependencies at build
+time and a missing module fails at runtime, not at review.
+
+## 2026-08-06 · The agent never sees what the golden tests expect
+There is no tool that returns `expected_result` or `expected_write_set`, and no policy row that
+could permit one. An implementation fitted to the oracle is not measured by it. The agent gets
+the case *names* and the branches they cover — a description of the job, not the answer to it.
+
+Same division of labour as `write_golden_tests` taking invocation ids instead of parameter
+values, invariants being evaluated in code, and canonicalisation happening before the model
+sees anything.
+
+## 2026-08-06 · The clock pin lands in the golden suite and nowhere else
+`golden_tests.baseline_context` has been declared since M4 and was never written; `recordBaseline`
+now populates it. The service-side suite pins the service to that instant, and canonicalises
+against that instant's clock window rather than today's — having pinned the service to the
+baseline, the timestamps it writes belong to the baseline's window, and handing the canonicaliser
+the current one would leave them looking like literal dates and fail every case on a field that
+is normalised away on both sides.
+
+The shadow harness must never use the pin. `GETDATE()` cannot be overridden inside T-SQL, so
+pass A cannot be pinned, and pinning pass B alone would flip every clock-dependent branch on one
+side only and manufacture divergence across four hundred cases. This reads like an obvious
+improvement and is a trap.
+
+## 2026-08-06 · `watchWrites` is factored out rather than copied
+The golden suite has to measure a service with the same instrument that recorded the
+expectation, so the before/after fingerprint logic is lifted out of `executeRolledBack` and
+takes an `invoke` callback — a procedure call in one case, an HTTP request in the other.
+A second copy of the checksum logic would drift, and the first symptom would be a "behaviour
+change" that is really two different ways of asking what changed. `docs/DECISIONS.md` records
+M5 learning that about `bindParameters`.
+
+Whether the work is thrown away is the caller's business: the procedure runs inside a
+transaction and rolls back, the service commits over its own connection and the shadow database
+is reverted before each case. Reverting per case is ~530 ms and buys the property the baseline
+had — every case starting from the same state.
+
+## 2026-08-06 · The negative control for the golden suite is the reference implementation
+Rather than fabricating a perturbation, the suite is run against the hand-written service,
+which is known to diverge. Measured: **16 of 17 cases pass and `verny20_stacking_triggered`
+fails** — the planted defect's own branch — with `TotalNet` identical on both sides
+(29 416,6342) and `TotalVat` moving 6 589,3261 → 8 236,6576.
+
+A suite that cannot fail is not evidence. M1 and M2 each shipped an assertion that compared a
+constant to itself, and both times it was found by asking what would make it red.
+
+## 2026-08-06 · The expectations recorded on ParityShop hold on the restored copy
+Golden expectations were recorded against the estate inside a rolled-back transaction; the
+service runs against `ParityShop_Shadow` and commits. Whether the two agree was assumed rather
+than demonstrated, so `verify-m6` runs the **procedure** through the same service-side path on
+the shadow copy first and asserts it is green. Measured: 17/17. If that ever goes red, nothing
+else in the section means anything, so it is the first check in it.
+
+## 2026-08-06 · `proven` needs a decision, not just a green run
+`oracle_state` reaches `proven` only when three things hold at once: the run was against the
+generated service, it surfaced no findings, and every behavioural difference the reference run
+found carries a recorded decision. A green run against an implementation that simply reproduces
+everything is proof that nothing changed, not that anyone agreed to anything — and `proven` is a
+claim about a decision having been taken. Beat 4 is exactly this: the click is what moves the
+estate.
+
+Promote, never demote, the same rule and reason as the oracle's ladder.
+
+## 2026-08-06 · `proven` short-circuits the blocker ladder
+`blockerFor` returns `no_domain` when `domain` is null, and `domain` is null for all fourteen
+rows with nothing in the codebase writing it. Without a short-circuit, the demo's closing move —
+the blocker table advancing as `sp_CalculateOrderTotal` is migrated — would land on
+`nepřiřazená doména`, which reads as a *new* problem appearing at the moment the story is
+supposed to be finishing.
+
+## 2026-08-06 · Three pricing services, each pinned to one database
+`pricing-service` (reference, shadow copy), `pricing-service-generated` (the agent's, shadow
+copy) and `pricing-service-live` (the agent's, the estate, behind the monolith's flag). The
+live one connects as `sa`, like the monolith itself, and never as `parity_runner` —
+`parity_runner` has `db_datawriter` on the estate, and using it here would put a footnote on
+"Parity cannot write to the estate it analyses".
+
+Rejected: one service choosing its database per request. It would put one process in a position
+to write to both, and M5's *"the shadow connection never opens against ParityShop at all"* would
+stop being an observation about a connection string and become an argument about a code path.
+
+## 2026-08-06 · The flag is per request, defaults to the old path, and is not captured
+`x-parity-pricing: service` routes one request to the extracted service; anything else,
+including a value nobody recognises, runs the procedure. A migration is only reversible while
+the thing it replaced still runs.
+
+Service-path calls are deliberately **not** written to `parity_capture.Invocation`. A call that
+never reached a procedure is not a procedure invocation, and recording it as one would put rows
+into the capture describing calls the estate never made — the table every number downstream is
+drawn from.
+
+The two paths cannot be told apart by their response: the procedure has no result set, so the
+endpoint has always returned `{ total: null }`. They are told apart by what they write and by
+which service saw the request, which is what the gate asserts on.
+
+## 2026-08-06 · Assembling a PR and opening one are separate acts
+`open_pr` assembles the branch, the files and the Czech body and persists them; opening is a
+second, explicit step. Opening a pull request on a public repository is the one act in this
+platform that `make demo-reset` cannot take back, so `verify-m6` only ever assembles — and the
+tier table refuses `open_pr` to every task class, which means whatever does open one always has
+a person behind it. `probe-pr` provokes that refusal live, because `seedPolicy` writes the tier
+table unconditionally and a check against it could not fail.
+
+The PR carries exactly the four things `docs/MILESTONES.md` names — spec, tests, service and the
+recorded decision. Not the feature flag and not the HTTP shell: both are platform code already
+on `main` by the time anyone opens it, and a PR that re-states merged code is one nobody reads
+to the end.
+
+## 2026-08-06 · One repository, and the token comes from `gh`
+PRs open against `secho/parity-workspace` at the `parity-platform-demo-app/` path, as the M0
+entry requires. `GITHUB_DEMO_REPO` named a repository that does not exist and was read by no
+code; it is replaced by `GITHUB_REPO`. `make github-token` takes the token from the `gh` CLI the
+operator is already signed in to and writes it into `.env`, which is gitignored — nothing is
+pasted by hand and no credential enters the repository. Without one, Parity assembles the PR and
+reports why it cannot open it; it never shows a URL nothing opened.
+
+The GitHub client is plain `fetch` against the Git Data API — blobs, tree, commit, ref, PR — in
+one file, no Octokit. Four documented REST calls did not justify a seventh dependency, and
+*"the PR adapter is one interface, GitHub here and ADO in production"* is a credible sentence
+only if the file behind it can be read in one sitting.
+
+## 2026-08-06 · Decisions are read by procedure, not by the latest run
+The queue is scoped to the newest succeeded run per procedure, correctly — it shows work, and
+superseded work is not work. M6 makes the consequence visible: the moment the generated service
+replays green, the latest run has zero findings, so the queue empties and takes the *decided*
+list with it. Beat 4 would end on a blank screen immediately after the most important click in
+the demo. A decision is a record, not work; it belongs to the procedure and outlives the run
+that provoked it, and the procedure screen's `Rozhodnutí` tab reads it that way.
+
+## 2026-08-06 · The shadow run asks its target what it is
+`shadow_runs.implementation` was a hardcoded literal at M5 — harmless with one replacement, and
+actively wrong with two: the agent's service would have been recorded as the hand-written one.
+It is now derived from the target's `/health`, including the artefact hash it is serving, so
+"the source that was replayed is the source the agent wrote" is a query across two systems
+rather than an assumption. A health gate runs before pass B for the same reason: a service that
+is down or has no adopted source says so, instead of failing four hundred cases on a run whose
+status still reads `succeeded`.
+
+## 2026-08-06 · VERNY20 expires on 2026-12-31
+`db/30-reference.sql` sets the promo's validity window, and the planted divergence needs
+`@PromoDiscount > 0`. Outside that window both branches compute the same value and the defect
+vanishes from the shadow run. Seed and traffic are pinned to `DEMO_EPOCH`, but the *replay*
+reads the live server clock on both sides, so the demo is correct until the end of 2026 and
+silently degrades afterwards. Recorded here because M6 is the last milestone positioned to
+notice it.

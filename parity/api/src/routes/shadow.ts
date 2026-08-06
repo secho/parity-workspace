@@ -197,6 +197,41 @@ export async function shadowRoutes(app: FastifyInstance, db: Db, config: Config)
   });
 
   /**
+   * Every decision ever taken on this procedure, newest first — by PROCEDURE, not by run.
+   *
+   * The queue is scoped to the latest run because it shows work, and work that has been
+   * superseded is not work. But that scoping has a consequence M6 makes visible: the moment
+   * the generated service replays green, the latest run has zero findings, so the queue
+   * empties — and it takes the *decided* list with it. Beat 4 of the demo would end on a blank
+   * screen, immediately after the most important click in the whole thing.
+   *
+   * A decision is not work, it is a record. It belongs to the procedure and it outlives the
+   * run that provoked it, which is exactly what the PR has to attach.
+   */
+  app.get<{ Params: { name: string } }>('/api/procedures/:name/decisions', async (req, reply) => {
+    const [procedure] = await db.select().from(procedures).where(eq(procedures.name, req.params.name));
+    if (procedure === undefined) return reply.code(404).send({ error: 'no such procedure' });
+
+    const rows = await db
+      .select({
+        id: decisions.id,
+        signature: decisions.diffSignature,
+        action: decisions.action,
+        note: decisions.note,
+        decidedBy: decisions.decidedBy,
+        decidedAt: decisions.decidedAt,
+        shadowRunId: decisions.shadowRunId,
+        implementation: shadowRuns.implementation,
+      })
+      .from(decisions)
+      .innerJoin(shadowRuns, eq(decisions.shadowRunId, shadowRuns.id))
+      .where(eq(decisions.procedureId, procedure.id))
+      .orderBy(desc(decisions.decidedAt));
+
+    return { procedure: procedure.name, decisions: rows };
+  });
+
+  /**
    * Start a shadow run, then classify what survived canonicalisation.
    *
    * Long — twenty seconds of replay plus one model run per finding — so the client is

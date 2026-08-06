@@ -26,7 +26,10 @@ if (!readiness.ready) {
 const procedureName = process.argv[2] ?? 'sp_CalculateOrderTotal';
 // Feedback from a previous attempt, as text. `make implement-service FEEDBACK="..."` — but in
 // practice this comes from `service-attempt.ts`, which runs the suite and assembles it.
-const feedback = process.env.PARITY_SERVICE_FEEDBACK ?? null;
+// Empty is absent. `make implement-service` always passes the variable, so treating "" as a
+// value would put an empty "what the previous attempt got wrong" section into every first
+// attempt's prompt — a heading with nothing under it, which is worse than no heading.
+const feedback = (process.env.PARITY_SERVICE_FEEDBACK ?? '') === '' ? null : process.env.PARITY_SERVICE_FEEDBACK!;
 
 const store = openStore(config.pgUrl);
 await waitForPostgres(store.pool);

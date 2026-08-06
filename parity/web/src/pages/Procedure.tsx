@@ -2,19 +2,23 @@ import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { cs, formatDate, formatInt } from '../copy';
 import {
+  fetchDecisions,
   fetchOracle,
   fetchProcedure,
+  fetchPullRequest,
   fetchRuns,
   fetchShadow,
   fetchSpec,
   type AgentRunInfo,
   type ColumnAccess,
+  type DecisionRecord,
   type OracleResponse,
   type ProcedureResponse,
+  type PullRequestRecord,
   type ShadowResponse,
 } from '../lib/api';
 
-type Tab = 'source' | 'data' | 'coupling' | 'spec' | 'oracle' | 'shadow' | 'steps';
+type Tab = 'source' | 'data' | 'coupling' | 'spec' | 'oracle' | 'shadow' | 'decisions' | 'pr' | 'steps';
 
 export function Procedure(): JSX.Element {
   const { name = '' } = useParams();
@@ -25,6 +29,10 @@ export function Procedure(): JSX.Element {
   const [oracle, setOracle] = useState<OracleResponse | null>(null);
   const [runs, setRuns] = useState<AgentRunInfo[]>([]);
   const [shadow, setShadow] = useState<ShadowResponse | null>(null);
+  const [decisions, setDecisions] = useState<DecisionRecord[]>([]);
+  const [pr, setPr] = useState<{ latest: PullRequestRecord | null; readiness: { ready: boolean; reason: string | null } } | null>(
+    null,
+  );
 
   useEffect(() => {
     setData(null);
@@ -36,7 +44,11 @@ export function Procedure(): JSX.Element {
     void fetchSpec(name).then((r) => setSpec(r.spec), () => undefined);
     void fetchOracle(name).then(setOracle, () => undefined);
     void fetchRuns(name).then((r) => setRuns(r.runs), () => undefined);
+    setDecisions([]);
+    setPr(null);
     void fetchShadow(name).then(setShadow, () => undefined);
+    void fetchDecisions(name).then((r) => setDecisions(r.decisions), () => undefined);
+    void fetchPullRequest(name).then(setPr, () => undefined);
   }, [name]);
 
   // Agent steps arrive live while a run is in flight. They are persisted as they happen,
@@ -156,6 +168,18 @@ export function Procedure(): JSX.Element {
               style={{ marginLeft: 6 }}
             >
               {shadow.latestRun.behaviourDiffs}
+            </span>
+          )}
+        </button>
+        <button className={tab === 'decisions' ? 'active' : ''} onClick={() => setTab('decisions')}>
+          {cs.procedure.decisionsTab}
+          {decisions.length > 0 && <span className="chip none" style={{ marginLeft: 6 }}>{decisions.length}</span>}
+        </button>
+        <button className={tab === 'pr' ? 'active' : ''} onClick={() => setTab('pr')}>
+          {cs.pr.title}
+          {pr?.latest != null && (
+            <span className={`chip ${pr.latest.status === 'open' ? 'good' : 'none'}`} style={{ marginLeft: 6 }}>
+              {pr.latest.status === 'open' ? `#${pr.latest.number}` : cs.pr.assembledChip}
             </span>
           )}
         </button>
@@ -397,6 +421,93 @@ export function Procedure(): JSX.Element {
                 </p>
               </>
             )}
+          </>
+        ))}
+
+      {/*
+        Decisions belong to the PROCEDURE, not to the latest shadow run. The queue is scoped to
+        the newest run because it shows work; this is the record, and it has to survive the
+        green re-run that empties the queue.
+      */}
+      {tab === 'decisions' &&
+        (decisions.length === 0 ? (
+          <p className="empty">{cs.decisions.empty}</p>
+        ) : (
+          <table className="grid">
+            <thead>
+              <tr>
+                <th>{cs.decisions.signature}</th>
+                <th>{cs.decisions.action}</th>
+                <th>{cs.decisions.by}</th>
+                <th>{cs.decisions.run}</th>
+                <th>{cs.decisions.note}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {decisions.map((d) => (
+                <tr key={d.id}>
+                  <td className="mono">{d.signature}</td>
+                  <td>{cs.decisions.actions[d.action as keyof typeof cs.decisions.actions] ?? d.action}</td>
+                  <td>{d.decidedBy === 'human' ? cs.decisions.human : d.decidedBy}</td>
+                  <td className="subtle">{d.implementation}</td>
+                  <td>{d.note ?? cs.common.none}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ))}
+
+      {/*
+        Absent, never simulated. Without a token there is no URL, and what goes where the URL
+        would be is the reason there is no URL — not a plausible-looking link.
+      */}
+      {tab === 'pr' &&
+        (pr === null || pr.latest === null ? (
+          <p className="empty">{cs.pr.empty}</p>
+        ) : (
+          <>
+            <dl className="facts">
+              <div>
+                <dt>{cs.pr.status}</dt>
+                <dd>{cs.pr.statuses[pr.latest.status as keyof typeof cs.pr.statuses] ?? pr.latest.status}</dd>
+              </div>
+              <div>
+                <dt>{cs.pr.branch}</dt>
+                <dd className="mono">
+                  {pr.latest.branch} → {pr.latest.baseBranch}
+                </dd>
+              </div>
+              <div>
+                <dt>{cs.pr.repo}</dt>
+                <dd className="mono">
+                  {pr.latest.owner}/{pr.latest.repo}
+                </dd>
+              </div>
+              <div>
+                <dt>{cs.pr.artifact}</dt>
+                <dd className="mono">{pr.latest.artifactHash.slice(0, 12)}</dd>
+              </div>
+            </dl>
+
+            {pr.latest.url === null ? (
+              <p className="subtle">{pr.readiness.ready ? cs.pr.notOpened : `${cs.pr.blocked} ${pr.readiness.reason ?? ''}`}</p>
+            ) : (
+              <p>
+                <a className="mono" href={pr.latest.url} target="_blank" rel="noreferrer">
+                  {pr.latest.url}
+                </a>
+              </p>
+            )}
+
+            <h3>{cs.pr.files}</h3>
+            <ul className="mono">
+              {pr.latest.files.map((f) => (
+                <li key={f.path}>{f.path}</li>
+              ))}
+            </ul>
+
+            <h3>{cs.pr.body}</h3>
+            <pre className="source">{pr.latest.body}</pre>
           </>
         ))}
 
