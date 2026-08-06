@@ -1,5 +1,6 @@
 .PHONY: up down remount seed seed-checksum traffic traffic-checksum ingest demo-reset map-estate \
-        generate-oracles shadow-db shadow-run \
+        generate-oracles shadow-db shadow-run implement-service adopt-service service-suite \
+        github-token open-pr \
         verify-m0 verify-m1 verify-m2 verify-m3 verify-m4 verify-m5 verify-m6 verify-m7
 
 # Waits only for the containers that must exist BEFORE seeding. shop-api's health
@@ -28,7 +29,7 @@ down:
 # keeps serving from memory. A shadow run would then replay against whatever the last build
 # happened to contain, which is the worst possible way for it to be wrong.
 remount:
-	docker compose up -d --force-recreate parity-api parity-web pricing-service
+	docker compose up -d --force-recreate parity-api parity-web pricing-service pricing-service-generated pricing-service-live
 	@printf "waiting for parity-api"
 	@until [ "$$(docker inspect -f '{{.State.Health.Status}}' parity-api 2>/dev/null)" = "healthy" ]; do printf "."; sleep 2; done
 	@echo " healthy"
@@ -114,13 +115,63 @@ verify-m4:
 # and ask classify-diff about what canonicalisation could not settle. One live model run per
 # finding — a handful, not one per difference. Separate from verify-m5 for the same reason
 # generate-oracles is separate from verify-m4.
+#
+# IMPL picks the replacement. `reference` (the default) is M5's hand-written service — the
+# positive control, the only implementation that diverges, and therefore the standing proof
+# this harness can still find a real behavioural difference. `generated` is the agent's.
+#
+# Run the reference one FIRST. `latestRunIds` scopes the decision queue to the newest succeeded
+# run per procedure, so a reference run after a green one re-fills the queue with findings that
+# have already been decided.
 shadow-run:
-	docker compose exec -T parity-api npx tsx src/cli/shadow-run.ts $(PROC) $(CASES)
+	docker compose exec -T parity-api npx tsx src/cli/shadow-run.ts $(PROC) $(CASES) $(IMPL)
 
 verify-m5:
 	npm --prefix scripts install --silent
 	npm --prefix scripts run verify-m5
+
+# One live Opus run that writes the replacement. Separate from the gate, like map-estate,
+# generate-oracles and shadow-run before it: it spends real money and several minutes, and the
+# gate asserts what it persisted.
+#
+# PARITY_SERVICE_FEEDBACK carries what the previous attempt got wrong, so a second attempt is a
+# correction rather than a re-roll.
+implement-service:
+	docker compose exec -T -e PARITY_SERVICE_FEEDBACK="$(FEEDBACK)" parity-api npx tsx src/cli/implement-service.ts $(PROC)
+
+# Materialise the generated service onto disk. Runs on the HOST on purpose: parity-api has no
+# mount into parity-platform-demo-app, because the SDK's built-in Write is not prefixed
+# mcp__parity__ and the tier table therefore cannot refuse it. The agent writes rows; this
+# writes files.
+adopt-service:
+	npm --prefix scripts install --silent
+	npm --prefix scripts run adopt-service $(PROC)
+
+# The golden suite against a replacement. TARGET=service is the measurement; `reference` and
+# `procedure_on_shadow` are the two controls — see src/cli/service-suite.ts.
+service-suite:
+	docker compose exec -T parity-api npx tsx src/cli/service-suite.ts $(PROC) $(TARGET)
+
+# Take the token from the gh CLI you are already signed in to and put it where compose can
+# read it. Nothing is pasted by hand and no credential enters the repository — .env is
+# gitignored. Re-runnable: the line is replaced, not appended.
+github-token:
+	@gh auth token >/dev/null 2>&1 || { echo "gh is not authenticated — run \`gh auth login\`"; exit 1; }
+	@touch .env
+	@grep -v '^GITHUB_TOKEN=' .env > .env.tmp || true
+	@echo "GITHUB_TOKEN=$$(gh auth token)" >> .env.tmp
+	@mv .env.tmp .env
+	@echo "GITHUB_TOKEN written to .env for $$(gh api user --jq .login)"
+	@docker compose up -d parity-api >/dev/null
+	@echo "parity-api restarted with the token"
+
+# Assemble the PR. Opening it needs --commit, which the gate never passes: a pull request on a
+# public repository is the one act here that demo-reset cannot take back.
+open-pr:
+	docker compose exec -T parity-api npx tsx src/cli/open-pr.ts $(PROC) $(COMMIT)
+
 verify-m6:
-	@echo "TODO M6 acceptance"; exit 1
+	npm --prefix scripts install --silent
+	npm --prefix scripts run verify-m6
 verify-m7:
 	@echo "TODO M7 acceptance"; exit 1

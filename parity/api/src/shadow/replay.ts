@@ -152,6 +152,37 @@ export async function replayService(
   return outcomes;
 }
 
+export interface ServiceHealth {
+  status: string;
+  database: string;
+  implementation?: string;
+  artifact?: string | null;
+}
+
+/**
+ * Ask a replacement what it is before replaying four hundred cases against it.
+ *
+ * Two things come out of this and both are load-bearing. The first is a gate: a service that
+ * is down, or that has no adopted implementation, answers here rather than by returning a
+ * connection error four hundred times — which the diff engine would faithfully record as four
+ * hundred behavioural differences on a run whose status still said `succeeded`.
+ *
+ * The second is the label. `shadow_runs.implementation` was a hardcoded string at M5, which
+ * was harmless while there was one replacement and actively wrong the moment there were two:
+ * the agent's service would have been recorded as the hand-written one. Asking the target what
+ * it is — including the artefact hash it was materialised with — makes "the source that was
+ * replayed is the source the agent wrote" a query across two systems.
+ */
+export async function serviceHealth(baseUrl: string): Promise<ServiceHealth | null> {
+  try {
+    const response = await fetch(`${baseUrl}/health`);
+    if (!response.ok) return null;
+    return (await response.json()) as ServiceHealth;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Ask the replacement to drop its connection pool.
  *

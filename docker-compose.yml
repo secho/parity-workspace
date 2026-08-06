@@ -60,6 +60,10 @@ services:
       MSSQL_DATABASE: ParityShop
       PORT: "3000"
       CAPTURE_DEBUG: "${CAPTURE_DEBUG:-}"
+      # The other side of the feature flag. Requests carrying `x-parity-pricing: service` are
+      # priced here instead of by the procedure; everything else, including a header nobody
+      # recognises, still runs the procedure.
+      PRICING_SERVICE_URL: http://pricing-service-live:3000
     ports:
       # Deliberately not 3000/5173: those collide with whatever else the presenter
       # has running, and localhost resolving to IPv6 first will silently hit the

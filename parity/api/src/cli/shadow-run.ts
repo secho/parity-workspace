@@ -22,7 +22,13 @@ if (!readiness.ready) {
   process.exit(1);
 }
 const procedureName = process.argv[2] ?? 'sp_CalculateOrderTotal';
-const limit = process.argv[3] === undefined ? undefined : Number(process.argv[3]);
+const limit = process.argv[3] === undefined || process.argv[3] === '' ? undefined : Number(process.argv[3]);
+
+// Which replacement. `reference` is M5's hand-written service — the positive control, the only
+// implementation that diverges, and therefore the standing proof this harness can still find a
+// real behavioural difference. `generated` is what the agent wrote. Defaulting to `reference`
+// keeps every existing invocation of this command meaning exactly what it meant at M5.
+const implementation = process.argv[4] === 'generated' ? 'generated' : 'reference';
 
 const store = openStore(config.pgUrl);
 await waitForPostgres(store.pool);
@@ -32,6 +38,7 @@ await seedPolicy(store.db);
 const result = await runShadow(store.db, config, {
   procedureName,
   limit,
+  implementation,
   onProgress: (message) => console.log(`  ${message}`),
 });
 
@@ -40,6 +47,7 @@ console.log(
     `${(result.replayMs / 1000).toFixed(1)}s (${(result.replayMs / result.casesReplayed).toFixed(1)} ms/case)`,
 );
 console.log(`shadow database: ${result.shadowDatabase}`);
+console.log(`implementation: ${result.implementation}`);
 console.log(
   `differences: ${result.rawDiffs} raw, ${result.resolvedByCanonicaliser} resolved by canonicalisation, ` +
     `${result.surviving} survived`,

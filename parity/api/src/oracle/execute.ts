@@ -189,14 +189,58 @@ export async function executeRolledBack(
   pool: sql.ConnectionPool,
   request: ExecutionRequest,
 ): Promise<ExecutionOutcome> {
-  const tables = request.writeTables.filter((t) => request.primaryKeys.has(t)).sort();
   const transaction = new sql.Transaction(pool);
   await transaction.begin();
 
   try {
+    return await watchWrites({
+      newRequest: () => new sql.Request(transaction),
+      writeTables: request.writeTables,
+      primaryKeys: request.primaryKeys,
+      invoke: async () => {
+        const call = new sql.Request(transaction);
+        bindParameters(call, request.parameters, request.params);
+        const result = await call.execute(`dbo.${request.procedureName}`);
+        return (result.recordsets ?? []) as unknown as unknown[][];
+      },
+    });
+  } finally {
+    // Always. Not on success, not unless something went wrong — always. The estate this runs
+    // against is the one the demo depends on being identical between rehearsals.
+    await transaction.rollback();
+  }
+}
+
+export interface WatchRequest {
+  /** Every statement must land on the SAME session — the fingerprints live in temp tables. */
+  newRequest: () => sql.Request;
+  writeTables: string[];
+  primaryKeys: Map<string, string[]>;
+  /** Whatever changes the database. A procedure call, or an HTTP request to a replacement. */
+  invoke: () => Promise<unknown[][]>;
+}
+
+/**
+ * Fingerprint the tables, do the thing, fingerprint again, and report what moved.
+ *
+ * Factored out of `executeRolledBack` at M6 so the golden suite can measure a **service** with
+ * the same instrument it used to record the expectation. The alternative was a second copy of
+ * the checksum logic for the HTTP path, and a second copy would drift — the first symptom
+ * being a "behaviour change" that is really two different ways of asking what changed.
+ * `docs/DECISIONS.md` records M5 learning that about `bindParameters`.
+ *
+ * Note there is no transaction here. Whether the work is thrown away is the caller's business:
+ * the procedure runs inside one and rolls back, while a service commits over its own
+ * connection and the shadow database is reverted afterwards. Both are observable this way,
+ * which is the point.
+ */
+export async function watchWrites(request: WatchRequest): Promise<ExecutionOutcome> {
+  const tables = request.writeTables.filter((t) => request.primaryKeys.has(t)).sort();
+
+  {
     for (const [index, table] of tables.entries()) {
       const pk = request.primaryKeys.get(table)!;
-      await new sql.Request(transaction).batch(`
+      await request.newRequest().batch(`
         IF OBJECT_ID('tempdb..#before_${index}') IS NOT NULL DROP TABLE #before_${index};
         SELECT ${pk.map(bracket).join(', ')}, BINARY_CHECKSUM(*) AS __chk
         INTO #before_${index}
@@ -206,22 +250,19 @@ export async function executeRolledBack(
     // Taken before the call, so it is what the procedure is about to read rather than what
     // the clock had moved on to by the time the call returned.
     const context = (
-      await new sql.Request(transaction).query(`
+      await request.newRequest().query(`
         SELECT CONVERT(varchar(33), GETDATE(), 126) AS getdate,
                CONVERT(varchar(33), SYSDATETIME(), 126) AS sysdatetime,
                CONVERT(varchar(33), SYSUTCDATETIME(), 126) AS sysutcdatetime,
                @@DATEFIRST AS datefirst, @@LANGUAGE AS language`)
     ).recordset[0] as AmbientContext;
 
-    const call = new sql.Request(transaction);
-    bindParameters(call, request.parameters, request.params);
-
     const serverNow = async (): Promise<number> =>
-      ((await new sql.Request(transaction).query(`SELECT GETDATE() AS at`)).recordset[0].at as Date).getTime();
+      ((await request.newRequest().query(`SELECT GETDATE() AS at`)).recordset[0].at as Date).getTime();
 
     const windowFrom = await serverNow();
     const started = Date.now();
-    const result = await call.execute(`dbo.${request.procedureName}`);
+    const resultSets = await request.invoke();
     const durationMs = Date.now() - started;
     const windowTo = await serverNow();
 
@@ -231,7 +272,7 @@ export async function executeRolledBack(
     for (const [index, table] of tables.entries()) {
       const pk = request.primaryKeys.get(table)!;
       const join = pk.map((c) => `a.${bracket(c)} = b.${bracket(c)}`).join(' AND ');
-      const changes = new sql.Request(transaction);
+      const changes = request.newRequest();
 
       // Two full fingerprint passes and one keyed read. The alternative — checksumming the
       // base table inside the join — is not expressible: BINARY_CHECKSUM(*) cannot be
@@ -282,16 +323,12 @@ export async function executeRolledBack(
     }
 
     return {
-      resultSets: (result.recordsets ?? []) as unknown as unknown[][],
+      resultSets,
       writeSet,
       context,
       clockWindow: { from: windowFrom, to: windowTo },
       durationMs,
       truncatedTables,
     };
-  } finally {
-    // Always. Not on success, not unless something went wrong — always. The estate this runs
-    // against is the one the demo depends on being identical between rehearsals.
-    await transaction.rollback();
   }
 }

@@ -8,6 +8,7 @@ import {
   reserveStock,
   syncWarehouseDispatch,
 } from '../procs.js';
+import { calculateOrderTotalViaService, wantsService } from '../pricing.js';
 
 /**
  * The write side of the estate. M1's traffic generator drives these over HTTP to build
@@ -43,14 +44,35 @@ export default async function opsRoutes(app: FastifyInstance): Promise<void> {
     return reply.code(201).send({ order: result.recordset?.[0] ?? null });
   });
 
+  /**
+   * The migrated endpoint, and the only one with two implementations behind it.
+   *
+   * `x-parity-pricing: service` routes this request to the extracted service; anything else,
+   * including nothing at all and including a value nobody recognises, runs the stored
+   * procedure. Defaulting to the old path is the whole point — a migration is only reversible
+   * while the thing it replaced still runs.
+   *
+   * The response shape is identical on both sides, and identically uninformative: the
+   * procedure has no result set, so this has always returned `{ total: null }`. The two paths
+   * are told apart by what they write and by which service saw the request, never by the
+   * payload — which is what `verify-m6` asserts on, because it is the only thing there is.
+   */
   app.post<{ Params: { orderNumber: string }; Body: { promoCode?: string } }>(
     '/api/orders/:orderNumber/total',
     async (req) => {
+      if (wantsService(req.headers['x-parity-pricing'])) {
+        await calculateOrderTotalViaService({
+          orderNumber: req.params.orderNumber,
+          promoCode: req.body?.promoCode ?? null,
+        });
+        return { total: null, path: 'service' };
+      }
+
       const result = await calculateOrderTotal({
         orderNumber: req.params.orderNumber,
         promoCode: req.body?.promoCode ?? null,
       });
-      return { total: result.recordset?.[0] ?? null };
+      return { total: result.recordset?.[0] ?? null, path: 'procedure' };
     },
   );
 
