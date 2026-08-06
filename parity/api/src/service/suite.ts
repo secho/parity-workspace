@@ -74,6 +74,12 @@ export async function runServiceSuite(
   if (cases.length === 0) throw new Error(`${procedureName} has no golden tests — run \`make generate-oracles\` first`);
 
   const baseUrl = target === 'reference' ? config.pricingServiceUrl : config.generatedServiceUrl;
+
+  // Only the generated service accepts an injected clock. The procedure cannot be pinned at all
+  // — `GETDATE()` is not overridable inside T-SQL — and M5's reference reads the database clock
+  // by design, because a replacement reading a different clock than the thing it replaces
+  // produces differences that are about the network rather than about the code.
+  const pinned = target === 'service';
   const writeTables = await writeTablesFor(db, procedure.id);
 
   // `probe` so the gate can tell a control apart from the real thing, and so a deliberately
@@ -134,7 +140,7 @@ export async function runServiceSuite(
             headers: {
               'content-type': 'application/json',
               // The pin. Only here, never in the shadow harness.
-              ...(baseline.getdate === undefined ? {} : { 'x-parity-now': baseline.getdate }),
+              ...(pinned && baseline.getdate !== undefined ? { 'x-parity-now': baseline.getdate } : {}),
             },
             body: JSON.stringify(test.inputParams),
           });
@@ -144,9 +150,20 @@ export async function runServiceSuite(
         },
       });
 
+      // Canonicalise against the window whose clock the target actually read.
+      //
+      // Only the generated service honours `x-parity-now`, so only it wrote the baseline's
+      // instant and only it may be normalised against the baseline's window. The procedure
+      // reads `GETDATE()` and the M5 reference reads the database clock, so both wrote *now*
+      // and must be normalised against now — handed the baseline's window they produce
+      // `<clock+970s>` where the expectation says `<clock>`, and every case fails on a field
+      // that is normalised away on both sides.
+      //
+      // This was invisible until `baseline_context` was populated: with the column empty the
+      // code fell through to `outcome.clockWindow` and was accidentally right for two of the
+      // three targets.
       const canonical = canonicalise(outcome, {
-        // The baseline's window, not this run's — see the note at the top of this file.
-        clockWindow: baseline.clockWindow ?? outcome.clockWindow,
+        clockWindow: pinned ? (baseline.clockWindow ?? outcome.clockWindow) : outcome.clockWindow,
         identityColumns,
       });
 

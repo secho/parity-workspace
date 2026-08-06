@@ -127,10 +127,21 @@ async function main(): Promise<void> {
     // --- 2 · The service is the agent's ---------------------------------------
     section('2 · The service is the agent\'s, and what ran is what it wrote');
 
+    // The run that produced the DEPLOYED service, reached through the artefact it wrote —
+    // not merely the newest run carrying that skill name. `probe-pr` also runs
+    // `implement-service`, and it is supposed to end `blocked`; picking by skill and recency
+    // asserted "it succeeded" about the probe whose entire purpose is to be refused.
     const implRun = await client.query(
-      `SELECT * FROM agent_runs WHERE skill = 'implement-service' ORDER BY id DESC LIMIT 1`,
+      `SELECT ar.* FROM agent_runs ar
+       WHERE ar.id = (
+         SELECT sa.agent_run_id FROM service_artifacts sa
+         JOIN procedures p ON p.id = sa.procedure_id
+         WHERE p.name = $1 AND sa.agent_run_id IS NOT NULL
+         ORDER BY sa.attempt DESC LIMIT 1
+       )`,
+      [TARGET],
     );
-    check(implRun.rowCount === 1, 'an implement-service run exists');
+    check((implRun.rowCount ?? 0) === 1, 'the run that wrote the deployed service is on record');
     check(implRun.rows[0]?.status === 'succeeded', 'it succeeded', implRun.rows[0]?.status ?? 'missing');
     check(
       (implRun.rows[0]?.model ?? '').includes('opus'),
@@ -295,29 +306,67 @@ async function main(): Promise<void> {
     );
     check(totalNetDiverged.rows[0].n === 0, 'while TotalNet never diverges — which is why nobody found it in fifteen years');
 
-    const aa = await client.query(`SELECT * FROM shadow_runs WHERE kind = 'aa' ORDER BY id DESC LIMIT 1`);
-    check(aa.rowCount === 1 && aa.rows[0].raw_diffs >= 0, 'the A/A control is on record', `run ${aa.rows[0]?.id}`);
+    // Stronger than counting cases: the two runs replayed the SAME captured invocations, in
+    // the same order. Selection is deterministic, so this should hold — and if it ever stops
+    // holding, "the difference is the implementation" stops being true and every conclusion
+    // drawn from comparing the two runs is drawn from comparing two different experiments.
+    const caseSets = await client.query(
+      `SELECT shadow_run_id, array_agg(source_invocation_id ORDER BY seq) AS ids
+       FROM shadow_cases WHERE shadow_run_id = ANY($1) GROUP BY shadow_run_id`,
+      [[r.id, g.id]],
+    );
+    const [setA, setB] = caseSets.rows.map((row) => JSON.stringify(row.ids));
+    check(
+      caseSets.rowCount === 2 && setA === setB,
+      'both runs replayed the identical case set, in the same order',
+      caseSets.rowCount === 2 ? '' : `${caseSets.rowCount} runs with cases`,
+    );
 
     // --- 6 · The decision is real, and it is what made the run green ----------
     section('6 · The decision is real, and it is what earned `proven`');
 
+    // Scoped to the procedure, not to one run. A decision is a record, not work: it outlives
+    // the run that provoked it, and the procedure screen reads it that way for the same reason.
+    // Which of the three actions was chosen is the presenter's call on stage, not something a
+    // gate gets to require — what a gate can require is that a person chose, and chose first.
     const decision = await client.query(
-      `SELECT d.* FROM decisions d WHERE d.shadow_run_id = $1 AND d.action = 'preserve' LIMIT 1`,
-      [r.id],
-    );
-    check(decision.rowCount === 1, 'a `Zachovat chování` decision exists on the reference run');
-    check(decision.rows[0]?.decided_by === 'human', 'taken by a human', decision.rows[0]?.decided_by ?? '');
-    check(decision.rows[0]?.agent_run_id === null, 'with no agent run behind it');
-
-    const undecided = await client.query(
-      `SELECT COUNT(*)::int AS n FROM diffs df
-       JOIN shadow_runs sr ON sr.id = df.shadow_run_id
-       LEFT JOIN decisions d ON d.shadow_run_id = df.shadow_run_id AND d.diff_signature = df.signature
-       WHERE sr.procedure_id = (SELECT id FROM procedures WHERE name = $1)
-         AND df.verdict = 'behaviour_change' AND d.id IS NULL`,
+      `SELECT d.*, sr.implementation_id FROM decisions d
+       JOIN shadow_runs sr ON sr.id = d.shadow_run_id
+       WHERE d.procedure_id = (SELECT id FROM procedures WHERE name = $1)
+       ORDER BY d.decided_at ASC LIMIT 1`,
       [TARGET],
     );
-    check(undecided.rows[0].n === 0, 'every behavioural finding has been decided', `${undecided.rows[0].n} open`);
+    check((decision.rowCount ?? 0) === 1, 'a decision has been recorded on this procedure');
+    check(
+      ['preserve', 'accept', 'escalate'].includes(decision.rows[0]?.action),
+      'with one of the three actions the queue offers',
+      decision.rows[0]?.action ?? '',
+    );
+    check(decision.rows[0]?.decided_by === 'human', 'taken by a human', decision.rows[0]?.decided_by ?? '');
+    check(decision.rows[0]?.agent_run_id === null, 'with no agent run behind it');
+    check(
+      decision.rows[0]?.implementation_id === 'reference',
+      'against the reference run — the one that surfaced the difference',
+      decision.rows[0]?.implementation_id ?? '',
+    );
+    check(
+      new Date(decision.rows[0]?.decided_at).getTime() < new Date(g.started_at).getTime(),
+      'and it was taken BEFORE the green run — the decision is what the service was built to honour',
+    );
+
+    // Distinct SIGNATURES on the run the queue actually asks about, not diff rows across every
+    // run ever made. A finding is a signature — one item in the queue, decided once, covering
+    // every case that carries it — so counting rows counts the same decision sixty-eight times,
+    // and counting across superseded runs asks for decisions on work that has been superseded.
+    // The same scoping mistake `classify_diff`, the decision undo and the queue itself each had
+    // to be fixed for.
+    const undecided = await client.query(
+      `SELECT COUNT(DISTINCT df.signature)::int AS n FROM diffs df
+       LEFT JOIN decisions d ON d.shadow_run_id = df.shadow_run_id AND d.diff_signature = df.signature
+       WHERE df.shadow_run_id = $1 AND df.verdict = 'behaviour_change' AND d.id IS NULL`,
+      [r.id],
+    );
+    check(undecided.rows[0].n === 0, 'every finding on that run has been decided', `${undecided.rows[0].n} open`);
 
     const prProbe = await probe('src/cli/probe-decision.ts');
     check(prProbe.attempted === true, 'a live agent still tries to record a decision');
@@ -335,9 +384,19 @@ async function main(): Promise<void> {
 
     // The estate is about to be written to on purpose. Snapshot the rows, exercise both paths,
     // restore in a finally — the same discipline verify-m2 and verify-m5 use for their probes.
-    await sa.request().query(`
-      IF OBJECT_ID('tempdb..#m6_ledger') IS NOT NULL DROP TABLE #m6_ledger;
-      SELECT * INTO #m6_ledger FROM dbo.OrderLedger WHERE OrderNumber = '${order}';`);
+    //
+    // Held in memory rather than in a #temp table: `sa` is a pool, so consecutive statements
+    // land on whichever connection is free, and a session-scoped temp table written by one is
+    // invisible to the next. The symptom is an `Invalid object name` in the `finally` — which
+    // is the worst place for it, because that is the code that puts the estate back.
+    const snapshot = (
+      await sa.request().input('order', mssql.NVarChar(20), order).query(`
+        SELECT OrderLineID, TotalNet, TotalVat, TotalWithVat, DiscountAmount, PromoCodeUsed,
+               PromoDiscountAmount, LoyaltyDiscountAmount, LoyaltyPointsEarned, ShippingCost,
+               CalcCachedAt, CalcVersion, ModifiedAt, ModifiedBy
+        FROM dbo.OrderLedger WHERE OrderNumber = @order`)
+    ).recordset;
+    check(snapshot.length > 0, 'the rows about to be written are snapshotted first', `${snapshot.length} lines`);
 
     try {
       const call = async (flag: string | null): Promise<{ status: number; path?: string }> => {
@@ -355,28 +414,39 @@ async function main(): Promise<void> {
         return { status: response.status, path: body.path };
       };
 
-      const captureBeforeOff = await sa
-        .request()
-        .query(`SELECT COUNT_BIG(*) AS n FROM parity_capture.Invocation WHERE ProcName = '${TARGET}'`);
+      // The capture buffers, so it must be flushed before it is counted — verify-m1 learned
+      // the same thing. Counting by CallerContext rather than by ProcName because sampling
+      // means an arbitrary call may or may not carry a result set, but every invocation the
+      // gate makes is tagged and every tagged one is recorded.
+      const flush = async (): Promise<void> => {
+        await fetch(`${SHOP}/api/_capture/flush`, { method: 'POST', signal: AbortSignal.timeout(60_000) });
+      };
+      const tagged = async (): Promise<number> => {
+        await flush();
+        const row = await sa
+          .request()
+          .query(`SELECT COUNT_BIG(*) AS n FROM parity_capture.Invocation WHERE CallerContext = 'verify:m6'`);
+        return Number(row.recordset[0].n);
+      };
+
+      const captureStart = await tagged();
       const off = await call(null);
-      const captureAfterOff = await sa
-        .request()
-        .query(`SELECT COUNT_BIG(*) AS n FROM parity_capture.Invocation WHERE ProcName = '${TARGET}'`);
+      const captureAfterOff = await tagged();
 
       check(off.status === 200 && off.path === 'procedure', 'no header runs the procedure', off.path ?? `${off.status}`);
       check(
-        Number(captureAfterOff.recordset[0].n) > Number(captureBeforeOff.recordset[0].n),
+        captureAfterOff > captureStart,
         'and it lands in the capture, as a procedure call should',
+        `${captureStart} -> ${captureAfterOff}`,
       );
 
       const on = await call('service');
-      const captureAfterOn = await sa
-        .request()
-        .query(`SELECT COUNT_BIG(*) AS n FROM parity_capture.Invocation WHERE ProcName = '${TARGET}'`);
+      const captureAfterOn = await tagged();
       check(on.status === 200 && on.path === 'service', '`x-parity-pricing: service` runs the service', on.path ?? `${on.status}`);
       check(
-        Number(captureAfterOn.recordset[0].n) === Number(captureAfterOff.recordset[0].n),
+        captureAfterOn === captureAfterOff,
         'and does NOT land in the capture — it was never a procedure call',
+        `${captureAfterOff} -> ${captureAfterOn}`,
       );
 
       const garbage = await call('banana');
@@ -402,15 +472,33 @@ async function main(): Promise<void> {
       check(leaked.rows[0].n === 0, "and they are excluded from the harness's case selection", `${leaked.rows[0].n} leaked`);
     } finally {
       // Always. The estate the demo depends on being identical between rehearsals.
-      await sa.request().query(`
-        UPDATE l SET l.TotalNet = b.TotalNet, l.TotalVat = b.TotalVat, l.TotalWithVat = b.TotalWithVat,
-                     l.DiscountAmount = b.DiscountAmount, l.PromoCodeUsed = b.PromoCodeUsed,
-                     l.PromoDiscountAmount = b.PromoDiscountAmount, l.LoyaltyDiscountAmount = b.LoyaltyDiscountAmount,
-                     l.LoyaltyPointsEarned = b.LoyaltyPointsEarned, l.ShippingCost = b.ShippingCost,
-                     l.CalcCachedAt = b.CalcCachedAt, l.CalcVersion = b.CalcVersion,
-                     l.ModifiedAt = b.ModifiedAt, l.ModifiedBy = b.ModifiedBy
-        FROM dbo.OrderLedger l JOIN #m6_ledger b ON b.OrderLineID = l.OrderLineID;
-        DROP TABLE #m6_ledger;`);
+      for (const row of snapshot) {
+        await sa
+          .request()
+          .input('id', mssql.Int, row.OrderLineID)
+          .input('totalNet', mssql.Decimal(18, 4), row.TotalNet)
+          .input('totalVat', mssql.Decimal(18, 4), row.TotalVat)
+          .input('totalWithVat', mssql.Decimal(18, 4), row.TotalWithVat)
+          .input('discount', mssql.Decimal(18, 4), row.DiscountAmount)
+          .input('promoCode', mssql.NVarChar(40), row.PromoCodeUsed)
+          .input('promoDiscount', mssql.Decimal(18, 4), row.PromoDiscountAmount)
+          .input('loyaltyDiscount', mssql.Decimal(18, 4), row.LoyaltyDiscountAmount)
+          .input('points', mssql.Int, row.LoyaltyPointsEarned)
+          .input('shipping', mssql.Decimal(18, 4), row.ShippingCost)
+          .input('cachedAt', mssql.DateTime2(3), row.CalcCachedAt)
+          .input('version', mssql.NVarChar(20), row.CalcVersion)
+          .input('modifiedAt', mssql.DateTime2(3), row.ModifiedAt)
+          .input('modifiedBy', mssql.NVarChar(60), row.ModifiedBy)
+          .query(`
+            UPDATE dbo.OrderLedger
+               SET TotalNet = @totalNet, TotalVat = @totalVat, TotalWithVat = @totalWithVat,
+                   DiscountAmount = @discount, PromoCodeUsed = @promoCode,
+                   PromoDiscountAmount = @promoDiscount, LoyaltyDiscountAmount = @loyaltyDiscount,
+                   LoyaltyPointsEarned = @points, ShippingCost = @shipping,
+                   CalcCachedAt = @cachedAt, CalcVersion = @version,
+                   ModifiedAt = @modifiedAt, ModifiedBy = @modifiedBy
+             WHERE OrderLineID = @id`);
+      }
     }
 
     const afterFlag = await estateFingerprint(sa);

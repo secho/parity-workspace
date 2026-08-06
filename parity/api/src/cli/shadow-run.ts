@@ -21,14 +21,32 @@ if (!readiness.ready) {
   console.error(`agent is not configured: ${readiness.reason}`);
   process.exit(1);
 }
-const procedureName = process.argv[2] ?? 'sp_CalculateOrderTotal';
-const limit = process.argv[3] === undefined || process.argv[3] === '' ? undefined : Number(process.argv[3]);
+// Empty is absent. The Makefile always passes all three positions so that an empty CASES=
+// cannot let IMPL slide into its slot, which means the empties arrive here and must not be
+// mistaken for values.
+const arg = (index: number): string | undefined => {
+  const value = process.argv[index];
+  return value === undefined || value === '' ? undefined : value;
+};
+
+const procedureName = arg(2) ?? 'sp_CalculateOrderTotal';
+const rawLimit = arg(3);
+if (rawLimit !== undefined && Number.isNaN(Number(rawLimit))) {
+  console.error(`CASES must be a number, got "${rawLimit}"`);
+  process.exit(1);
+}
+const limit = rawLimit === undefined ? undefined : Number(rawLimit);
 
 // Which replacement. `reference` is M5's hand-written service — the positive control, the only
 // implementation that diverges, and therefore the standing proof this harness can still find a
 // real behavioural difference. `generated` is what the agent wrote. Defaulting to `reference`
 // keeps every existing invocation of this command meaning exactly what it meant at M5.
-const implementation = process.argv[4] === 'generated' ? 'generated' : 'reference';
+const rawImpl = arg(4) ?? 'reference';
+if (rawImpl !== 'reference' && rawImpl !== 'generated') {
+  console.error(`IMPL must be reference or generated, got "${rawImpl}"`);
+  process.exit(1);
+}
+const implementation = rawImpl;
 
 const store = openStore(config.pgUrl);
 await waitForPostgres(store.pool);

@@ -150,10 +150,21 @@ deliberately does **not** run `demo-reset` — it would take M3's and M4's live 
 M5's run.
 
 ## M6 — Service and PR
-- [ ] `implement-service` generates `pricing-service` (Node + TS + Fastify)
-- [ ] Monolith calls it behind a feature flag; both paths runnable
-- [ ] Shadow run against the new service goes green after the human decision
-- [ ] `open_pr` opens a real PR on GitHub with spec, tests, service and the recorded decision attached
+- [x] `implement-service` generates `pricing-service` (Node + TS + Fastify) — **two attempts,
+      $2.23 + $1.70**. Attempt 1 failed all 17 golden cases on one T-SQL error: it bound
+      `@totalNet`/`@totalVat`/`@totalWithVat` and then `DECLARE`d `@TotalNet`/`@TotalVat`/
+      `@TotalWithVat` in the same batch, and T-SQL identifiers are case-insensitive. Given that
+      cause, attempt 2 passes **17/17**
+- [x] Monolith calls it behind a feature flag; both paths runnable — `x-parity-pricing: service`
+      per request, defaulting to the procedure. The flagged path is **not** written to the
+      capture: a call that never reached a procedure is not a procedure invocation
+- [x] Shadow run against the new service goes green after the human decision — **400 cases,
+      27/27 strata, 20 s. 1 600 raw differences, all 1 600 resolved in code, 0 surviving,
+      0 findings** — against the reference implementation's 1 668 raw / 68 surviving / 4 findings
+      on the identical case set
+- [x] `open_pr` assembles a PR carrying spec, tests, service and the recorded decision. Opening
+      it is a separate, explicit act — the tier table refuses `open_pr` to every task class, so
+      the thing that opens one always has a person behind it
 
 **The hand-written service from M5 stays, as the reference implementation.** It was recorded as
 a stub for M6 to replace; it is now permanent, and it is the harness's positive control — the

@@ -85,6 +85,19 @@ export async function runShadow(db: Db, config: Config, options: ShadowOptions):
   const estate = await connect(config);
   const selection = await selectCases(estate, options.procedureName, limit);
   await estate.close();
+
+  // A run that replayed nothing is not a green run, it is an absent one — and it looked exactly
+  // like success: `0 raw differences, 0 to classify, 0 findings`, status `succeeded`, and a row
+  // that would have satisfied every downstream check about there being no behavioural
+  // difference. Caught when an empty `CASES=` let `IMPL` slide into the limit slot and
+  // `Number('generated')` came back NaN.
+  if (selection.cases.length === 0) {
+    throw new Error(
+      `no cases selected for ${options.procedureName}` +
+        (limit !== undefined && !Number.isFinite(limit) ? ` — the case limit resolved to ${limit}` : '') +
+        '. A replay of nothing is not a replay.',
+    );
+  }
   say(`${selection.cases.length} cases over ${selection.strata} strata`);
 
   const implementationId: ShadowImplementation = options.implementation ?? 'reference';

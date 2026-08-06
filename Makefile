@@ -123,8 +123,11 @@ verify-m4:
 # Run the reference one FIRST. `latestRunIds` scopes the decision queue to the newest succeeded
 # run per procedure, so a reference run after a green one re-fills the queue with findings that
 # have already been decided.
+# Quoted, every one of them. Unquoted, an empty CASES= collapses out of the argument list and
+# IMPL slides into its place — `Number('generated')` is NaN, so the run selects nothing and
+# labels itself `reference`. It then reports success, having replayed zero cases.
 shadow-run:
-	docker compose exec -T parity-api npx tsx src/cli/shadow-run.ts $(PROC) $(CASES) $(IMPL)
+	docker compose exec -T parity-api npx tsx src/cli/shadow-run.ts "$(PROC)" "$(CASES)" "$(IMPL)"
 
 verify-m5:
 	npm --prefix scripts install --silent
