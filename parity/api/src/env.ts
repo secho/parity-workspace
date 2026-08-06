@@ -45,8 +45,29 @@ export interface Config {
     /** The backup every revert restores. Written by `make shadow-db`. */
     shadowBaseBackup: string;
   };
-  /** The replacement the shadow harness replays against. M5 hand-written, M6 generated. */
+  /**
+   * The two replacements the shadow harness can replay against.
+   *
+   * Both are permanent and they are not interchangeable. `reference` is M5's hand-written
+   * service — the only implementation that diverges, and therefore the positive control that
+   * proves the diff engine can still find a real behavioural difference. `generated` is what
+   * `implement-service` wrote, and it is the one that has to go green.
+   *
+   * A third instance, `pricing-service-live`, is the monolith's flagged target and is not a
+   * replay target at all: it prices against the estate, so it is deliberately absent here.
+   */
   pricingServiceUrl: string;
+  generatedServiceUrl: string;
+  /**
+   * Where `open_pr` opens. One repository — `docs/DECISIONS.md` rules out a remote per app,
+   * so the PR lands on this workspace repo at the `parity-platform-demo-app/` path.
+   */
+  github: {
+    token: string;
+    owner: string;
+    repo: string;
+    baseBranch: string;
+  };
   /** Real files the SDK loads and the UI lists. Same directory, no copy in between. */
   skillsDir: string;
   /** Run workspaces. Outside the application directory on purpose — see agent/workspace.ts. */
@@ -106,6 +127,27 @@ export function agentReadiness(): { ready: boolean; reason: string | null; reaso
   return { ready: true, reason: null, reasonCode: null };
 }
 
+export type PrBlockedReason = 'missing_token' | 'missing_owner' | 'missing_repo';
+
+/**
+ * Whether a PR can actually be opened, and if not, why — same shape and same reason as
+ * `agentReadiness()`.
+ *
+ * A PR that cannot be opened is a normal state, not an error: assembling one and opening it
+ * are separate acts, the gate only ever assembles, and the token is sourced from `gh` by
+ * `make github-token` rather than committed. What must never happen is a URL on screen that
+ * nothing opened — hard rule 4, absent beats simulated — so the reason code goes to the UI
+ * and the UI renders absence.
+ */
+export function prReadiness(config: Config): { ready: boolean; reason: string | null; reasonCode: PrBlockedReason | null } {
+  if (config.github.token === '') {
+    return { ready: false, reason: 'GITHUB_TOKEN is not set — run `make github-token`', reasonCode: 'missing_token' };
+  }
+  if (config.github.owner === '') return { ready: false, reason: 'GITHUB_OWNER is not set', reasonCode: 'missing_owner' };
+  if (config.github.repo === '') return { ready: false, reason: 'GITHUB_REPO is not set', reasonCode: 'missing_repo' };
+  return { ready: true, reason: null, reasonCode: null };
+}
+
 export function loadConfig(): Config {
   return {
     port: Number(process.env.PORT ?? 3000),
@@ -126,6 +168,16 @@ export function loadConfig(): Config {
       shadowBaseBackup: required('MSSQL_SHADOW_BASE_BACKUP', '/var/opt/mssql/backup/ParityShop_Shadow_base.bak'),
     },
     pricingServiceUrl: required('PRICING_SERVICE_URL', 'http://pricing-service:3000'),
+    generatedServiceUrl: required('GENERATED_SERVICE_URL', 'http://pricing-service-generated:3000'),
+    github: {
+      // No fallback and no throw. An absent token is a normal state — the demo runs without
+      // one right up to the moment someone clicks the button — so it is reported by
+      // prReadiness() rather than discovered as a crash halfway through assembling a PR.
+      token: process.env.GITHUB_TOKEN ?? '',
+      owner: process.env.GITHUB_OWNER ?? 'secho',
+      repo: process.env.GITHUB_REPO ?? 'parity-workspace',
+      baseBranch: process.env.GITHUB_BASE_BRANCH ?? 'main',
+    },
     skillsDir: process.env.PARITY_SKILLS_DIR ?? '/app/skills',
     agentWorkspace: process.env.PARITY_AGENT_WORKSPACE ?? '/tmp/parity-agent',
     mode: process.env.PARITY_MODE ?? 'live',

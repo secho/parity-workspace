@@ -150,12 +150,61 @@ deliberately does **not** run `demo-reset` — it would take M3's and M4's live 
 M5's run.
 
 ## M6 — Service and PR
-- [ ] `implement-service` generates `pricing-service` (Node + TS + Fastify)
-- [ ] Monolith calls it behind a feature flag; both paths runnable
-- [ ] Shadow run against the new service goes green after the human decision
-- [ ] `open_pr` opens a real PR on GitHub with spec, tests, service and the recorded decision attached
+- [x] `implement-service` generates `pricing-service` (Node + TS + Fastify) — **two attempts,
+      $2.23 + $1.70**. Attempt 1 failed all 17 golden cases on one T-SQL error: it bound
+      `@totalNet`/`@totalVat`/`@totalWithVat` and then `DECLARE`d `@TotalNet`/`@TotalVat`/
+      `@TotalWithVat` in the same batch, and T-SQL identifiers are case-insensitive. Given that
+      cause, attempt 2 passes **17/17**
+- [x] Monolith calls it behind a feature flag; both paths runnable — `x-parity-pricing: service`
+      per request, defaulting to the procedure. The flagged path is **not** written to the
+      capture: a call that never reached a procedure is not a procedure invocation
+- [x] Shadow run against the new service goes green after the human decision — **400 cases,
+      27/27 strata, 20 s. 1 600 raw differences, all 1 600 resolved in code, 0 surviving,
+      0 findings** — against the reference implementation's 1 668 raw / 68 surviving / 4 findings
+      on the identical case set
+- [x] `open_pr` opens a real PR on GitHub with spec, tests, service and the recorded decision
+      attached — **exercised for real once**, [PR #9](https://github.com/secho/parity-workspace/pull/9):
+      one commit, five files, over the Git Data API from a container with no checkout of the
+      repository. Assembling and opening are separate acts, and opening needs `--commit`: the
+      tier table refuses `open_pr` to every task class, so the thing that opens one always has a
+      person behind it, and `verify-m6` therefore never opens one
 
-`make verify-m6` — asserts the service passes all golden tests, the feature flag switches cleanly, a PR URL is produced.
+**Left for M7:** `make demo-reset` does not yet close the PR or delete its remote branch. The
+`pull_requests` row stores both the branch and the number precisely so that it can — M7's
+checklist already names "including remote branches and PRs".
+
+**The hand-written service from M5 stays, as the reference implementation.** It was recorded as
+a stub for M6 to replace; it is now permanent, and it is the harness's positive control — the
+only implementation that diverges from the procedure, and therefore the standing proof that the
+diff engine can still find a real behavioural difference. A green run against the generated
+service means nothing on its own; it means something beside a red one from the same harness, the
+same cases and the same database. `shadow_runs.implementation_id` is what lets `verify-m5` pin to
+`reference` and `verify-m6` to `generated`.
+
+Why the inversion: the M3 spec **documents the planted VAT defect in full** — `Chování` §12 gives
+the stacking formula, `Otevřené otázky` flags it by name. So a spec-faithful generated service
+reproduces the defect and goes green on the first try. It cannot be the source of beat 4's
+findings, and what it would produce instead is a scatter of accidental divergences that differ on
+every generation. See `docs/DECISIONS.md`.
+
+The agent writes `pricing.ts` and `persist.ts`. `index.ts` and `db.ts` are the shadow harness's
+contract — the replay route, `/health`, and the `/_admin/disconnect` handshake — and stay
+platform-owned. Said out loud rather than hidden.
+
+`make verify-m6` — asserts the service passes all golden tests, the feature flag switches cleanly,
+a PR is assembled with all four attachments, and — the load-bearing one — that the artefact hash
+the deployed service reports at `/health` is the one the agent wrote, so "what ran is what the
+agent wrote" is a query across two systems rather than a claim.
+
+**Gate order, once more.** The reference shadow run must come BEFORE the generated one:
+`latestRunIds` scopes the decision queue to the newest succeeded run per procedure, so a reference
+run afterwards re-fills the queue with findings that have already been decided.
+
+```
+demo-reset → map-estate → verify-m3 → generate-oracles → verify-m4
+  → shadow-db → shadow-run IMPL=reference → verify-m5
+  → implement-service → adopt-service → shadow-run IMPL=generated → verify-m6
+```
 
 ## M7 — Campaigns, reset, replay
 - [ ] Campaign runner + `Zmapovat estate` and `Smazat mrtvé procedury`

@@ -26,8 +26,8 @@ Open `sp_CalculateOrderTotal`.
 
 1. Agent extracts the spec. **Read one paragraph aloud** — it is in Czech and it is comprehensible. That is the point, not the technology.
 2. Agent generates golden tests from captured traffic, plus invariants.
-3. Agent implements `pricing-service`. *(M6. Until then the service is hand-written — say so.)*
-4. Shadow run, `Shadow runy` tab: **400 captured calls replayed, 27 of 27 observed branches, 16 s.**
+3. Shadow run against the **reference implementation**, `Shadow runy` tab: **400 captured calls
+   replayed, 27 of 27 observed branches, 16 s.**
    Then the three numbers that carry the beat — **1 668 hrubých odchylek → 1 600 vyřešila kanonikalizace → 68 zbylo na model**.
    Four findings. Say the middle number out loud: the model never saw 96 % of them.
 
@@ -41,14 +41,27 @@ Open the decision queue. Four items, and they are two different stories:
   `net − promo` where every other branch uses the full net. 32 of 400 cases. `TotalNet` is
   identical everywhere, which is exactly why nobody ever saw it.
 - **The new one** — the same two columns, one hundredth of a heller apart on 18 orders. The
-  replacement does its arithmetic in floating point and lands on a rounding boundary. Caught
-  before it shipped.
+  reference implementation does its arithmetic in binary floating point and lands on a rounding
+  boundary. Caught before it shipped — and the agent's service, told to match the database's
+  decimal arithmetic, does not have it.
 
 Show the side-by-side. Show the agent's reasoning. Click **Zachovat chování**.
 
 > "Systém našel něco, co tady patnáct let nikdo neviděl. A všimněte si, že to sám potichu neopravil — zeptal se. Opraví se to zvlášť, jako vědomé rozhodnutí."
 
-Agent adjusts, shadow reruns green, PR opens with spec, tests, service and the recorded decision attached.
+Now `implement-service` writes the replacement, and the decision is part of what it is given —
+`preserve` means the old behaviour is the required behaviour, however wrong it looks.
+
+Shadow run again, against the agent's service this time: **400 cases, 27 of 27 strata, 20 s,
+1 600 hrubých odchylek → 1 600 vyřešila kanonikalizace → 0 zbylo. Žádný nález.** Same harness,
+same case set, same database — only the implementation changed.
+
+> "Referenční implementace tam zůstává schválně. Je to kontrola: kdyby diff engine přestal
+> fungovat, byl by zelený i nad ní. Není."
+
+The `PR` tab: spec, golden tests, the service and the recorded decision, with the shadow
+numbers and `Kandidáti na opravu` in the body. Opening it is a click — the policy tier table
+refuses `open_pr` to every agent, and the `Provoz` page shows that rule.
 
 Back to Estate: coverage moved, the blocker table moved.
 

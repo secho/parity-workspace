@@ -50,6 +50,7 @@ export const cs = {
       coupling: 'Vazby',
     },
     shadowTab: 'Shadow runy',
+    decisionsTab: 'Rozhodnutí',
     facts: {
       lines: 'řádků T-SQL',
       invocations: 'volání za 90 dní',
@@ -160,6 +161,43 @@ export const cs = {
     // A violated invariant is a finding about the estate, not a broken oracle. The copy has
     // to say that plainly or the screen reads as "our tooling is failing".
     violationHint: 'Procedura porušuje pravidlo, které sama deklaruje. To není chyba oracle — to je nález.',
+  },
+
+  decisions: {
+    title: 'Rozhodnutí',
+    empty: 'Zatím nikdo nerozhodl.',
+    signature: 'odchylka',
+    action: 'rozhodnutí',
+    by: 'rozhodl',
+    run: 'implementace',
+    note: 'poznámka',
+    human: 'člověk',
+    actions: {
+      preserve: 'Zachovat chování',
+      accept: 'Přijmout změnu',
+      escalate: 'Eskalovat',
+    },
+  },
+
+  pr: {
+    title: 'PR',
+    empty: 'PR zatím není sestavený.',
+    assembledChip: 'sestaven',
+    status: 'stav',
+    branch: 'branch',
+    repo: 'repo',
+    artifact: 'artefakt',
+    files: 'Soubory',
+    body: 'Popis',
+    // Sestavit PR a otevřít ho jsou dva různé úkony. Otevření je jediná věc, kterou
+    // `make demo-reset` nevrátí zpátky, a policy ho nikdy nepustí přes agenta.
+    notOpened: 'Sestaveno, neotevřeno — otevření PR je vždycky na člověku.',
+    blocked: 'Otevřít zatím nejde:',
+    statuses: {
+      assembled: 'sestaven',
+      open: 'otevřen',
+      failed: 'selhalo',
+    },
   },
 
   shadow: {

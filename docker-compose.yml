@@ -60,6 +60,10 @@ services:
       MSSQL_DATABASE: ParityShop
       PORT: "3000"
       CAPTURE_DEBUG: "${CAPTURE_DEBUG:-}"
+      # The other side of the feature flag. Requests carrying `x-parity-pricing: service` are
+      # priced here instead of by the procedure; everything else, including a header nobody
+      # recognises, still runs the procedure.
+      PRICING_SERVICE_URL: http://pricing-service-live:3000
     ports:
       # Deliberately not 3000/5173: those collide with whatever else the presenter
       # has running, and localhost resolving to IPv6 first will silently hit the
@@ -93,13 +97,26 @@ services:
       shop-api:
         condition: service_started
 
-  # The migration target: sp_CalculateOrderTotal as a service. It prices against
-  # ParityShop_Shadow and never against ParityShop — the shadow harness compares the two
-  # implementations there, and the estate is not part of the experiment.
+  # The migration target: sp_CalculateOrderTotal as a service, in three instances.
   #
-  # M5 writes this by hand, because a behaviour *change* needs two implementations that
-  # differ and `implement-service` is M6. M6 replaces the source in place; the interface,
-  # the container and the harness stay exactly as they are.
+  # `pricing-service` is M5's hand-written REFERENCE implementation, and it stays. M6 does not
+  # replace it — it is the only implementation that diverges from the procedure, which makes it
+  # the positive control: the standing proof that the diff engine can still find a real
+  # behavioural difference. Delete it and a green shadow run stops being evidence of anything.
+  #
+  # `pricing-service-generated` runs what `implement-service` wrote. Same shadow database, same
+  # harness, same interface — the only difference is which source is behind it, which is what
+  # makes the two runs comparable.
+  #
+  # `pricing-service-live` runs that same generated source against the ESTATE, and is what the
+  # monolith's feature flag routes to. It connects as `sa` like the monolith itself, never as
+  # `parity_runner`: "Parity cannot write to the estate it analyses" is a statement about a
+  # credential, and it must not acquire a footnote here.
+  #
+  # All three price against exactly one database, fixed at container start. A single service
+  # able to choose per request would put one process in a position to write to both, and M5's
+  # "the shadow connection never opens against ParityShop" would stop being an observation
+  # about a connection string and become an argument about a code path.
   pricing-service:
     build:
       context: ./parity-platform-demo-app/pricing-service
@@ -115,6 +132,61 @@ services:
       - "${PRICING_SERVICE_PORT:-3300}:3000"
     volumes:
       - ./parity-platform-demo-app/pricing-service/src:/app/src:ro
+    depends_on:
+      mssql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  pricing-service-generated:
+    build:
+      context: ./parity-platform-demo-app/pricing-service-generated
+    container_name: parityshop-pricing-generated
+    environment:
+      MSSQL_HOST: mssql
+      MSSQL_PORT: "1433"
+      PRICING_DB: "${MSSQL_SHADOW_DATABASE:-ParityShop_Shadow}"
+      PRICING_DB_USER: "${PARITY_RUNNER_USER:-parity_runner}"
+      PRICING_DB_PASSWORD: "${PARITY_RUNNER_PASSWORD:-Parity_Runner_2026!}"
+      PORT: "3000"
+    ports:
+      - "${PRICING_SERVICE_GENERATED_PORT:-3301}:3000"
+    volumes:
+      - ./parity-platform-demo-app/pricing-service-generated/src:/app/src:ro
+    depends_on:
+      mssql:
+        condition: service_healthy
+    healthcheck:
+      # Deliberately NOT asserting status here. Before `make adopt-service` has run there is no
+      # implementation and /health says `awaiting_artifact` — an honest state, and one the
+      # container has to stay up in so that adopting can be watched for.
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  pricing-service-live:
+    build:
+      context: ./parity-platform-demo-app/pricing-service-generated
+    container_name: parityshop-pricing-live
+    environment:
+      MSSQL_HOST: mssql
+      MSSQL_PORT: "1433"
+      # The estate, and the shop's own credential. This instance is part of ParityShop, not
+      # part of Parity, so it does not borrow Parity's login to write to production.
+      PRICING_DB: "${MSSQL_DATABASE:-ParityShop}"
+      PRICING_DB_USER: sa
+      PRICING_DB_PASSWORD: "${MSSQL_SA_PASSWORD}"
+      PORT: "3000"
+    ports:
+      - "${PRICING_SERVICE_LIVE_PORT:-3302}:3000"
+    volumes:
+      - ./parity-platform-demo-app/pricing-service-generated/src:/app/src:ro
     depends_on:
       mssql:
         condition: service_healthy
@@ -175,7 +247,14 @@ services:
       PARITY_SHADOW_USER: "${PARITY_SHADOW_USER:-parity_shadow}"
       PARITY_SHADOW_PASSWORD: "${PARITY_SHADOW_PASSWORD:-Parity_Shadow_2026!}"
       MSSQL_SHADOW_BASE_BACKUP: "${MSSQL_SHADOW_BASE_BACKUP:-/var/opt/mssql/backup/ParityShop_Shadow_base.bak}"
+      # Two replay targets: the hand-written reference (the positive control) and the agent's
+      # generated service (the migration target). Both against the shadow copy.
       PRICING_SERVICE_URL: http://pricing-service:3000
+      GENERATED_SERVICE_URL: http://pricing-service-generated:3000
+      GITHUB_TOKEN: "${GITHUB_TOKEN:-}"
+      GITHUB_OWNER: "${GITHUB_OWNER:-secho}"
+      GITHUB_REPO: "${GITHUB_REPO:-parity-workspace}"
+      GITHUB_BASE_BRANCH: "${GITHUB_BASE_BRANCH:-main}"
       PORT: "3000"
       PARITY_MODE: "${PARITY_MODE:-live}"
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"

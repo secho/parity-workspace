@@ -14,7 +14,7 @@ import type { Config } from '../env.js';
 import type { OracleState } from '../estate/blocker.js';
 import { connectRunner } from '../ingest/mssql.js';
 import { canonicalise, fingerprint, stableKey, type CanonicalOutcome } from './canonicalise.js';
-import { executeRolledBack, readIdentityColumns, readParameters, readPrimaryKeys } from './execute.js';
+import { executeRolledBack, readIdentityColumns, readParameters, readPrimaryKeys, type AmbientContext } from './execute.js';
 import { evaluate, invariantSpec, isConfirmedRule, loadReferenceValues, type InvariantSpec } from './invariants.js';
 
 /**
@@ -66,6 +66,16 @@ interface CaseRun {
   goldenTestId: number;
   name: string;
   canonical: CanonicalOutcome;
+  /**
+   * What the clock said while this expectation was being recorded.
+   *
+   * Kept because M6 pins the replacement service to it. `GETDATE()` cannot be overridden
+   * inside T-SQL, so a procedure always reads the wall clock; a service can be handed one,
+   * and handing it *this* one is what makes "the same case, against a different
+   * implementation" a fair comparison rather than a comparison of two different Tuesdays.
+   */
+  context: AmbientContext;
+  clockWindow: { from: number; to: number };
   durationMs: number;
 }
 
@@ -116,6 +126,8 @@ async function executeCases(
         goldenTestId: test.id,
         name: test.name,
         canonical: canonicalise(outcome, { clockWindow: outcome.clockWindow, identityColumns }),
+        context: outcome.context,
+        clockWindow: outcome.clockWindow,
         durationMs: Date.now() - started,
       });
     }
@@ -146,6 +158,10 @@ export async function recordBaseline(db: Db, config: Config, procedureName: stri
         expectedResult: run.canonical.resultSets,
         expectedWriteSet: run.canonical.writeSet,
         normalisations: run.canonical.normalisations,
+        // Declared since M4 and written here for the first time. Without it M6 has no instant
+        // to pin the service to, and a promo whose validity window closed between the baseline
+        // and the replay would take a different branch on one side only.
+        baselineContext: { ...run.context, clockWindow: run.clockWindow },
       })
       .where(eq(goldenTests.id, run.goldenTestId));
   }

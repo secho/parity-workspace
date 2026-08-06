@@ -32,6 +32,16 @@ export interface Blocker {
  * be solved first, so the blocker table reads as a work queue rather than a taxonomy.
  */
 export function blockerFor(p: BlockerInput): Blocker | null {
+  // Nothing blocks a procedure that has been migrated with proof. This has to come first,
+  // ahead of even the class checks: `proven` is the end of the ladder, and a procedure that
+  // reached it is not waiting on anything by definition.
+  //
+  // It is first for a second reason. `domain` is null for every row in this estate and nothing
+  // writes it, so without this line the demo's closing move — the blocker table advancing as
+  // sp_CalculateOrderTotal is migrated — would land on `nepřiřazená doména`, which reads as a
+  // NEW problem appearing at exactly the moment the story is supposed to be finishing.
+  if (p.oracleState === 'proven') return null;
+
   if (p.oracleClass === null) return { key: 'untriaged', label: 'netriazováno' };
 
   if (p.oracleClass === 'external') return { key: 'external', label: 'nelze stínovat — externí efekt' };
