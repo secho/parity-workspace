@@ -1,6 +1,6 @@
 .PHONY: up down remount seed seed-checksum traffic traffic-checksum ingest demo-reset map-estate \
         generate-oracles shadow-db shadow-run implement-service adopt-service service-suite \
-        github-token open-pr \
+        github-token open-pr record-golden replay-check \
         verify-m0 verify-m1 verify-m2 verify-m3 verify-m4 verify-m5 verify-m6 verify-m7
 
 # Waits only for the containers that must exist BEFORE seeding. shop-api's health
@@ -192,5 +192,18 @@ open-pr:
 verify-m6:
 	npm --prefix scripts install --silent
 	npm --prefix scripts run verify-m6
+# The recorded golden run: a snapshot of Parity's analysis, which is both what `docs/SPEC.md` §4
+# asks a fresh clone to be able to demo from and what replay mode restores. Read-only against the
+# live database — it captures, it never clears.
+record-golden:
+	npm --prefix scripts install --silent
+	npm --prefix scripts run record-golden
+
+# Restore that snapshot into a SCRATCH database and compare row for row. Proves the round-trip
+# holds before anything relies on it, and never touches the live analysis.
+replay-check:
+	npm --prefix scripts install --silent
+	npm --prefix scripts run replay-check
+
 verify-m7:
 	@echo "TODO M7 acceptance"; exit 1

@@ -11,7 +11,9 @@
     "verify-m4": "tsx verify-m4.ts",
     "verify-m5": "tsx verify-m5.ts",
     "verify-m6": "tsx verify-m6.ts",
-    "adopt-service": "tsx adopt-service.ts"
+    "adopt-service": "tsx adopt-service.ts",
+    "record-golden": "tsx golden.ts record",
+    "replay-check": "tsx golden.ts check"
   },
   "dependencies": {
     "mssql": "^11.0.1",
