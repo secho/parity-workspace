@@ -162,9 +162,16 @@ M5's run.
       27/27 strata, 20 s. 1 600 raw differences, all 1 600 resolved in code, 0 surviving,
       0 findings** — against the reference implementation's 1 668 raw / 68 surviving / 4 findings
       on the identical case set
-- [x] `open_pr` assembles a PR carrying spec, tests, service and the recorded decision. Opening
-      it is a separate, explicit act — the tier table refuses `open_pr` to every task class, so
-      the thing that opens one always has a person behind it
+- [x] `open_pr` opens a real PR on GitHub with spec, tests, service and the recorded decision
+      attached — **exercised for real once**, [PR #9](https://github.com/secho/parity-workspace/pull/9):
+      one commit, five files, over the Git Data API from a container with no checkout of the
+      repository. Assembling and opening are separate acts, and opening needs `--commit`: the
+      tier table refuses `open_pr` to every task class, so the thing that opens one always has a
+      person behind it, and `verify-m6` therefore never opens one
+
+**Left for M7:** `make demo-reset` does not yet close the PR or delete its remote branch. The
+`pull_requests` row stores both the branch and the number precisely so that it can — M7's
+checklist already names "including remote branches and PRs".
 
 **The hand-written service from M5 stays, as the reference implementation.** It was recorded as
 a stub for M6 to replace; it is now permanent, and it is the harness's positive control — the
