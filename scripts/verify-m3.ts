@@ -174,10 +174,15 @@ async function main(): Promise<void> {
 
     // --- 6. the audit log falls out of the hooks ---------------------------------
     section('Audit log');
+    // EVERY outcome counts. A tool the agent asked for produces exactly one audit row
+    // whichever way it went: 'allowed' if it ran, 'failed' if it ran and threw, 'blocked'
+    // if the policy gate refused it before it ran. Filtering any of them out makes the
+    // gate report a gap the hooks had already closed — first 'failed', then 'blocked'.
+    // The whole claim is that nothing is missing, so the count must admit everything.
     const { rows: auditRows } = await client.query<{ run_id: string; tool_uses: number; audit_rows: number }>(`
       SELECT r.run_id,
              (SELECT COUNT(*)::int FROM agent_steps s WHERE s.agent_run_id = r.id AND s.kind = 'tool_use') AS tool_uses,
-             (SELECT COUNT(*)::int FROM audit_entries a WHERE a.agent_run_id = r.id AND a.outcome = 'allowed') AS audit_rows
+             (SELECT COUNT(*)::int FROM audit_entries a WHERE a.agent_run_id = r.id) AS audit_rows
       FROM agent_runs r WHERE r.status <> 'failed'`);
     check(auditRows.length > 0, 'agent runs are recorded', `${auditRows.length} runs`);
     const unlogged = auditRows.filter((r) => r.audit_rows < r.tool_uses);

@@ -136,6 +136,13 @@ services:
       # already runs one; Parity is a client of a gateway and never one itself, so this
       # is the whole of the "point it at yours" change.
       ANTHROPIC_BASE_URL: "${PARITY_LLM_BASE_URL:-}"
+      # Claude Platform on AWS — Anthropic-operated, AWS IAM and Marketplace billing.
+      # Not Amazon Bedrock. Set CLAUDE_CODE_USE_ANTHROPIC_AWS to route through it; the
+      # Agent SDK supports it natively and the model IDs are unchanged.
+      CLAUDE_CODE_USE_ANTHROPIC_AWS: "${CLAUDE_CODE_USE_ANTHROPIC_AWS:-}"
+      ANTHROPIC_AWS_API_KEY: "${ANTHROPIC_AWS_API_KEY:-}"
+      ANTHROPIC_AWS_WORKSPACE_ID: "${ANTHROPIC_AWS_WORKSPACE_ID:-}"
+      AWS_REGION: "${AWS_REGION:-}"
       # Agent run directories. Outside /app on purpose — the SDK walks UP from cwd
       # looking for .claude, and a scratch dir inside the app would inherit settings
       # the agent must not have. See docs/DECISIONS.md.

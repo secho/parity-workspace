@@ -28,15 +28,47 @@ export interface Config {
 }
 
 /**
+ * Where model calls are routed.
+ *
+ * `anthropic_aws` is Claude Platform on AWS: Anthropic-operated, same-day API parity,
+ * AWS IAM and AWS Marketplace billing. It is NOT Amazon Bedrock — Bedrock is
+ * partner-operated with prefixed model IDs and a feature subset. The Agent SDK supports
+ * it natively via CLAUDE_CODE_USE_ANTHROPIC_AWS, and the model IDs are unchanged, so
+ * nothing in the skill registry moves.
+ */
+export type LlmRoute = 'anthropic_api' | 'anthropic_aws' | 'gateway';
+
+export function llmRoute(): LlmRoute {
+  if ((process.env.CLAUDE_CODE_USE_ANTHROPIC_AWS ?? '') !== '') return 'anthropic_aws';
+  if ((process.env.ANTHROPIC_BASE_URL ?? '') !== '') return 'gateway';
+  return 'anthropic_api';
+}
+
+/**
  * Whether an agent run can be attempted at all, and if not, why. Reported rather than
  * discovered halfway through a fourteen-procedure sweep.
  *
  * `reason` is for logs and is English like the rest of the code; `reasonCode` is what the
  * UI renders, so the Czech copy stays in the frontend's copy.ts with everything else.
  */
-export type AgentBlockedReason = 'missing_key' | 'placeholder_key';
+export type AgentBlockedReason = 'missing_key' | 'placeholder_key' | 'missing_workspace' | 'missing_region';
 
 export function agentReadiness(): { ready: boolean; reason: string | null; reasonCode: AgentBlockedReason | null } {
+  if (llmRoute() === 'anthropic_aws') {
+    // Both are required and neither has a fallback — the SDK fails at request time,
+    // fourteen procedures into a sweep, which is the wrong place to find out.
+    if ((process.env.ANTHROPIC_AWS_API_KEY ?? '') === '') {
+      return { ready: false, reason: 'ANTHROPIC_AWS_API_KEY is not set', reasonCode: 'missing_key' };
+    }
+    if ((process.env.ANTHROPIC_AWS_WORKSPACE_ID ?? '') === '') {
+      return { ready: false, reason: 'ANTHROPIC_AWS_WORKSPACE_ID is not set', reasonCode: 'missing_workspace' };
+    }
+    if ((process.env.AWS_REGION ?? '') === '') {
+      return { ready: false, reason: 'AWS_REGION is not set', reasonCode: 'missing_region' };
+    }
+    return { ready: true, reason: null, reasonCode: null };
+  }
+
   const key = process.env.ANTHROPIC_API_KEY ?? '';
   if (key === '') return { ready: false, reason: 'ANTHROPIC_API_KEY is not set', reasonCode: 'missing_key' };
   // `sk-ant-` on its own is the placeholder from .env.example.

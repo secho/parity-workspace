@@ -328,3 +328,89 @@ The SDK reports `usage` and `total_cost_usd` once per run, on the result message
 and cost therefore live on `agent_runs`; `audit_entries` records tool name, arguments,
 result summary, duration and outcome. A plausible-looking per-call token number would have
 been the easiest thing in the build to fabricate and the hardest to notice.
+
+## 2026-08-06 · Inference routes through Claude Platform on AWS
+Jan's account. Anthropic-operated with same-day API parity, AWS IAM and AWS Marketplace
+billing — **not** Amazon Bedrock, which is partner-operated with prefixed model IDs and a
+feature subset. The Agent SDK supports it natively: `CLAUDE_CODE_USE_ANTHROPIC_AWS=1` plus
+`ANTHROPIC_AWS_API_KEY`, `ANTHROPIC_AWS_WORKSPACE_ID` and `AWS_REGION`. Model IDs are
+unchanged, so the skill registry and every model reference stayed put.
+
+Strengthens rather than weakens the deck's "Parity is a client of a gateway, never one
+itself" line: the same platform now demonstrably routes three ways — the Anthropic API, a
+LiteLLM-compatible gateway, and a cloud provider — on one config line. `llmRoute()` is the
+only place that decides, and the badge reports the model the SDK actually used.
+
+Both AWS values are required with no fallback, so `agentReadiness()` checks them up front.
+Discovering a missing workspace ID fourteen procedures into a sweep is the wrong place.
+
+## 2026-08-06 · The API Dockerfile must not omit optional dependencies
+`--omit=optional` was copied from the monolith's Dockerfile, where it is harmless. The
+Agent SDK ships its native CLI as a per-platform optional dependency, so the image built
+clean and then failed at the first agent run with `Native CLI binary for linux-arm64 not
+found`. Worth remembering when any future service takes an SDK dependency: the flag is a
+monolith-specific optimisation, not a house style.
+
+## 2026-08-06 · The audit log was losing every failed tool call
+A tool that runs and throws fires `PostToolUseFailure`, not `PostToolUse`. Only the latter
+was registered, so 16 of 195 tool calls in the estate sweep produced no audit row at all —
+and a failed call is the one you most want a record of. The whole claim for hook-derived
+auditing is that nothing is instrumented by hand so nothing can be forgotten; a silent gap
+is worse than no claim.
+
+The gate then hid the fix twice, which is the part worth recording. `verify-m3` counted
+only `outcome = 'allowed'`, so the newly-written `failed` rows read as a gap; narrowing it
+to exclude `blocked` made the policy probe's refused call read as a gap too. Both times the
+hooks were correct and the query was wrong — the same defect as not recording the rows,
+one layer up. A tool call now produces exactly one row whichever way it went, and the
+assertion admits every outcome.
+
+## 2026-08-06 · The expectation table is derived from the T-SQL, not from SPEC §3
+`scripts/m3-expected-classes.json` was first written from SPEC's procedure table. Triage
+disagreed on six of fourteen, and on inspection the agent was right every time — it had
+read the code and the table had not:
+
+- `sp_SearchProducts` — the ordering trap SPEC §3 designed it for, found unprompted: every
+  `ORDER BY` branch sorts a tie-heavy column with no secondary key while paginating with
+  `OFFSET`. Unstable ordering is `nondet` by the skill's own definition.
+- `sp_LegacyPriceImport_v2` — ruled the clock out as normalisable *first*, correctly, then
+  found the real cause in the unexercised `@PriceData IS NULL` branch: every row in an
+  import batch is stamped with the same `@Now`, so `TOP 1 … ORDER BY ModifiedAt DESC` has
+  guaranteed ties and a plan-dependent tie-break.
+- `sp_ReserveStock` — two `SELECT TOP 1` sites with no `ORDER BY`.
+- `sp_GetProductDetail`, `sp_GetCartSummary`, `sp_RecalculateCustomerScore` — clock in a
+  branch condition, or in arithmetic feeding one.
+
+**This corrects an M1 claim.** The M1 entry above records that eleven procedures read the
+clock and *four* branch on it. There are five: `sp_GetProductDetail:45` filters the discount
+window with `AND @Now BETWEEN c.DiscountValidFrom AND c.DiscountValidTo`, so the price it
+returns depends on the day it runs. The M1 survey missed it; triage did not. SPEC §3 calls
+that procedure the easy tier-1 example — the code disagrees, and the code wins.
+
+## 2026-08-06 · A probe reads its verdict from the database, not from a clean return
+`probe-policy` originally reported from the run's return value. The SDK **throws** when a
+run ends on `maxTurns`, and a denied tool makes the agent spend turns explaining itself, so
+the probe died before it could report the refusal it had already successfully provoked. The
+refusal and its consequence are both written by the hook before the run ends, so the verdict
+is now read from `audit_entries` afterwards. A probe that can only report its finding when
+the agent exits tidily fails for the wrong reason.
+
+## 2026-08-06 · OPEN — the blocker table concentrates on one bucket
+Nine of fourteen procedures are `nondet`, carrying 25 646 of 45 297 invocations behind a
+single `chybí seam` blocker. This is the failure mode the M1 clock rule was written to
+prevent, and the rule half-worked: the clock *is* being correctly ruled out as normalisable.
+But `nondet` also covers unstable ordering, and this estate is deliberately full of missing
+`ORDER BY`s, so the classifications are accurate and the concentration is real.
+
+Accuracy is not the problem; "chybí seam · 9 procedur" is a weak roadmap. The proposed fix
+is to split that blocker by *which* seam is needed — clock, ordering, identifier — derived
+from `seam_requirements` in `blocker.ts`, still computed and never stored. "Five need a
+pinned clock, three need stable ordering" answers "what do we do Monday" in a way one bucket
+of nine does not. Deferred rather than done: it changes beat 1's screen, which is Jan's call.
+
+## 2026-08-06 · The SDK discovers its own bundled skills alongside Parity's
+`SDKSystemMessage.skills` reports nineteen skills, not five: Parity's own plus the CLI's
+bundled ones (`doctor`, `loop`, `run`, …). The `skills: [name]` option is a context filter,
+so the model only ever sees the one skill enabled for that run, and the Provoz page lists
+the five real files on disk. Recorded because "the agent loads exactly our five skills" is
+a stronger claim than the init message supports, and someone will read that array on stage.

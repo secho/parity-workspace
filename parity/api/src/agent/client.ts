@@ -1,4 +1,5 @@
 import { query, type Options, type SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import { llmRoute } from '../env.js';
 import { createWorkspace } from './workspace.js';
 import type { Skill } from './skills.js';
 
@@ -43,12 +44,25 @@ export interface RunResult {
   permissionDenials: { tool_name: string; tool_input: unknown }[];
 }
 
-/** Where the model is actually reached. Empty means the Anthropic API directly. */
+/**
+ * Where the model is actually reached — the top-right badge reads this.
+ *
+ * Three routes, one config line apart, which is the whole "point it at yours" argument:
+ * the Anthropic API directly, a LiteLLM-compatible gateway, or Claude Platform on AWS
+ * (Anthropic-operated, AWS IAM and Marketplace billing — not Amazon Bedrock).
+ */
 export function llmEndpoint(): { provider: string; baseUrl: string | null } {
-  const baseUrl = process.env.ANTHROPIC_BASE_URL ?? '';
-  return baseUrl === ''
-    ? { provider: 'Anthropic API', baseUrl: null }
-    : { provider: 'LLM Gateway', baseUrl };
+  switch (llmRoute()) {
+    case 'anthropic_aws':
+      return {
+        provider: 'Claude Platform on AWS',
+        baseUrl: process.env.AWS_REGION === undefined ? null : `${process.env.AWS_REGION} · ${process.env.ANTHROPIC_AWS_WORKSPACE_ID ?? '?'}`,
+      };
+    case 'gateway':
+      return { provider: 'LLM Gateway', baseUrl: process.env.ANTHROPIC_BASE_URL ?? null };
+    default:
+      return { provider: 'Anthropic API', baseUrl: null };
+  }
 }
 
 export async function runSkill(options: RunOptions): Promise<RunResult> {

@@ -109,10 +109,18 @@ export const cs = {
     auditEmpty: 'Zatím žádné volání nástroje. Audit log se naplní prvním během agenta.',
     outcomeAllowed: 'povoleno',
     outcomeBlocked: 'zablokováno',
-    agentBlocked: (code: string | null): string =>
-      code === 'placeholder_key'
-        ? 'Agent neběží: ANTHROPIC_API_KEY je jen zástupná hodnota z .env.example. Doplň klíč z Console do .env.'
-        : 'Agent neběží: v .env chybí ANTHROPIC_API_KEY. Doplň klíč z Console.',
+    agentBlocked: (code: string | null): string => {
+      switch (code) {
+        case 'placeholder_key':
+          return 'Agent neběží: ANTHROPIC_API_KEY je jen zástupná hodnota z .env.example. Doplň klíč z Console do .env.';
+        case 'missing_workspace':
+          return 'Agent neběží: chybí ANTHROPIC_AWS_WORKSPACE_ID. Bez workspace ID nemá Claude Platform on AWS kam request směrovat.';
+        case 'missing_region':
+          return 'Agent neběží: chybí AWS_REGION. Claude Platform on AWS nemá výchozí region.';
+        default:
+          return 'Agent neběží: v .env chybí API klíč.';
+      }
+    },
   },
 
   spec: {

@@ -82,5 +82,32 @@ export function buildHooks(context: HookContext): Options['hooks'] {
         ],
       },
     ],
+
+    /**
+     * A tool that ran and FAILED fires this, not PostToolUse. Registering only
+     * PostToolUse left one query_capture call with no audit row at all — the log
+     * silently claimed thirteen tool calls where fourteen had happened, which is
+     * precisely the "nothing can be forgotten" property the hooks exist to provide.
+     * A failed call is the one you most want a record of.
+     */
+    PostToolUseFailure: [
+      {
+        hooks: [
+          async (input) => {
+            if (input.hook_event_name !== 'PostToolUseFailure') return {};
+            await context.db.insert(auditEntries).values({
+              agentRunId: context.agentRunId,
+              seq: context.nextSeq(),
+              toolName: input.tool_name,
+              inputSummary: summarise(input.tool_input),
+              resultSummary: summarise((input as { tool_error?: unknown }).tool_error ?? 'tool call failed'),
+              outcome: 'failed',
+              reason: null,
+            });
+            return {};
+          },
+        ],
+      },
+    ],
   };
 }

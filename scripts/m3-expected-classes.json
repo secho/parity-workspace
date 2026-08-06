@@ -4,34 +4,95 @@
     "container the agent runs in — the agent must reach these conclusions from",
     "read_procedure and query_capture alone.",
     "",
-    "sp_CalculateOrderTotal is expected to be `nondet`, not the `det_write` SPEC §3's table",
-    "says. It reads GETDATE() into a variable and BRANCHES on it at line 123 to decide promo",
-    "validity, and skills/triage.md's clock rule makes that nondet. Both readings are",
-    "defensible and the rule wins: it is det_write GIVEN A PINNED CLOCK, exactly as",
-    "sp_PlaceOrder is shadowable given a seam, and the seam is what M6 delivers. If the",
-    "Estate screen shows nondet there, that is the rule working."
+    "DERIVED FROM THE T-SQL, NOT FROM SPEC §3's TABLE. Applying skills/triage.md's clock",
+    "rule — a clock in a branch condition or in arithmetic makes a procedure nondet —",
+    "FIVE procedures branch on the wall clock, not the four docs/DECISIONS.md records at",
+    "M1. The fifth is sp_GetProductDetail:45, `AND @Now BETWEEN c.DiscountValidFrom AND",
+    "c.DiscountValidTo`, which filters discount validity by wall-clock time: replay it on",
+    "a different day and the price differs. It was found by triage, not by the M1 survey.",
+    "",
+    "sp_CalculateOrderTotal is likewise `nondet`, not the `det_write` SPEC §3's table says.",
+    "Both readings are defensible and the rule wins: it is det_write GIVEN A PINNED CLOCK,",
+    "exactly as sp_PlaceOrder is shadowable given a seam, and the seam is what M6 delivers.",
+    "If the Estate screen shows nondet there, that is the rule working."
   ],
   "expected": {
-    "sp_GetProductDetail": { "oracleClass": "pure_read", "riskClass": "none" },
-    "sp_SearchProducts": { "oracleClass": "pure_read", "riskClass": "none" },
-    "sp_GetProductAvailability": { "oracleClass": "pure_read", "riskClass": "none" },
-    "sp_GetCartSummary": { "oracleClass": "pure_read", "riskClass": "money" },
-    "sp_CalculateOrderTotal": { "oracleClass": "nondet", "riskClass": "money", "requiresSeam": true },
-    "sp_ReserveStock": { "oracleClass": "det_write", "riskClass": "none" },
-    "sp_ApplyPromoCode": { "oracleClass": "nondet", "riskClass": "money", "requiresSeam": true },
-    "sp_PlaceOrder": { "oracleClass": "nondet", "riskClass": "money", "requiresSeam": true },
-    "sp_SyncWarehouseDispatch": { "oracleClass": "external", "riskClass": "none", "requiresSeam": true },
-    "sp_RecalculateCustomerScore": { "oracleClass": "none", "riskClass": "none" },
-    "sp_LegacyPriceImport_v2": { "oracleClass": "det_write", "riskClass": "money" },
-    "sp_ExportCatalogXml_OLD": { "oracleClass": "pure_read", "riskClass": "none" },
-    "sp_MigrateCustomerAddresses": { "oracleClass": "det_write", "riskClass": "none" },
-    "sp_RecomputeLoyaltyTier_deprecated": { "oracleClass": "det_write", "riskClass": "none" }
+    "sp_GetProductDetail": {
+      "oracleClass": "nondet",
+      "riskClass": "money",
+      "requiresSeam": true
+    },
+    "sp_SearchProducts": {
+      "oracleClass": "nondet",
+      "riskClass": "none",
+      "requiresSeam": true
+    },
+    "sp_GetProductAvailability": {
+      "oracleClass": "pure_read",
+      "riskClass": "none"
+    },
+    "sp_GetCartSummary": {
+      "oracleClass": "nondet",
+      "riskClass": "money",
+      "requiresSeam": true
+    },
+    "sp_CalculateOrderTotal": {
+      "oracleClass": "nondet",
+      "riskClass": "money",
+      "requiresSeam": true
+    },
+    "sp_ReserveStock": {
+      "oracleClass": "nondet",
+      "riskClass": "money",
+      "requiresSeam": true
+    },
+    "sp_ApplyPromoCode": {
+      "oracleClass": "nondet",
+      "riskClass": "money",
+      "requiresSeam": true
+    },
+    "sp_PlaceOrder": {
+      "oracleClass": "nondet",
+      "riskClass": "money",
+      "requiresSeam": true
+    },
+    "sp_SyncWarehouseDispatch": {
+      "oracleClass": "external",
+      "riskClass": "money",
+      "requiresSeam": true
+    },
+    "sp_RecalculateCustomerScore": {
+      "oracleClass": "nondet",
+      "riskClass": "money",
+      "requiresSeam": true
+    },
+    "sp_LegacyPriceImport_v2": {
+      "oracleClass": "nondet",
+      "riskClass": "money",
+      "requiresSeam": true
+    },
+    "sp_ExportCatalogXml_OLD": {
+      "oracleClass": "pure_read",
+      "riskClass": "none"
+    },
+    "sp_MigrateCustomerAddresses": {
+      "oracleClass": "det_write",
+      "riskClass": "money"
+    },
+    "sp_RecomputeLoyaltyTier_deprecated": {
+      "oracleClass": "det_write",
+      "riskClass": "money"
+    }
   },
   "notes": {
-    "sp_GetCartSummary": "pure_read but money-risk: it computes totals a customer sees, by copy-pasted logic from sp_CalculateOrderTotal.",
+    "sp_GetProductDetail": "Writes nothing, but line 45 filters the discount window against @Now — output depends on when it ran, so it is not replayable without a pinned clock. SPEC §3 calls it the easy tier-1 example; the code disagrees.",
+    "sp_GetCartSummary": "Money-risk and clock-branching at line 86 — the same promo-validity test as sp_CalculateOrderTotal, arrived at by copy-paste. Writes nothing, but is no more replayable than the procedure it was copied from.",
     "sp_ApplyPromoCode": "Branches on GETDATE() at line 65 for the validity window — same clock rule as sp_CalculateOrderTotal.",
     "sp_PlaceOrder": "NEWID(), GETDATE() and IDENTITY, and it orchestrates three other procedures.",
     "sp_SyncWarehouseDispatch": "Sends mail through sp_send_dbmail. A sent email cannot be rolled back, which is why it cannot be shadowed.",
-    "sp_RecalculateCustomerScore": "Ten years of accreted scoring rules with no definition of correct outside the procedure itself."
+    "sp_RecalculateCustomerScore": "DATEDIFF(DAY, LastOrderAt, @Now) feeds the 30/90/180-day RecencyPoints branches — clock in arithmetic feeding a branch. Also `none` in the sense SPEC means, but nondet is what the rule yields.",
+    "sp_ReserveStock": "Two `SELECT TOP 1` sites with no ORDER BY — unstable row selection, which skills/triage.md lists under nondet alongside the clock. SPEC §3 calls it det_write; the missing ORDER BYs say otherwise.",
+    "sp_SearchProducts": "The ordering trap SPEC §3 designed it for, found unprompted: every ORDER BY branch sorts a tie-heavy column with no secondary key while paginating with OFFSET.",
+    "sp_LegacyPriceImport_v2": "Clock correctly ruled out as normalisable first. The real cause is the unexercised @PriceData IS NULL branch: every row in a batch gets the same @Now in ModifiedAt, so `TOP 1 ... ORDER BY ModifiedAt DESC` has guaranteed ties and a plan-dependent tie-break."
   }
 }
