@@ -32,6 +32,14 @@ export interface AssembleInput {
 
 const cs = (n: number): string => n.toLocaleString('cs-CZ');
 
+/**
+ * Czech counts three ways: 1 takes the singular, 2–4 the nominative plural, 5 and up the
+ * genitive. "4 odchylek" and "2 souborů" are the mistake a non-native speaker makes and a
+ * Czech-speaking audience reads instantly — and this text goes into a pull request they open.
+ */
+const plural = (n: number, one: string, few: string, many: string): string =>
+  `${cs(n)} ${n === 1 ? one : n >= 2 && n <= 4 ? few : many}`;
+
 export async function assemblePr(db: Db, config: Config, input: AssembleInput): Promise<PullRequest | null> {
   const [procedure] = await db.select().from(procedures).where(eq(procedures.name, input.procedureName));
   if (procedure === undefined) return null;
@@ -73,10 +81,16 @@ export async function assemblePr(db: Db, config: Config, input: AssembleInput): 
     .orderBy(desc(shadowRuns.id))
     .limit(1);
 
+  // `kind = 'verify'` as well as `target = 'service'`. Both controls — the reference
+  // implementation and the procedure-on-the-shadow-copy — are also recorded against a service
+  // target, and the reference one is *supposed* to be red. Selecting on target alone picked
+  // whichever ran last and put "16/17 prošlo" into a PR whose service passes 17 of 17.
   const [suite] = await db
     .select()
     .from(oracleRuns)
-    .where(and(eq(oracleRuns.procedureId, procedure.id), eq(oracleRuns.target, 'service')))
+    .where(
+      and(eq(oracleRuns.procedureId, procedure.id), eq(oracleRuns.target, 'service'), eq(oracleRuns.kind, 'verify')),
+    )
     .orderBy(desc(oracleRuns.id))
     .limit(1);
 
@@ -203,7 +217,7 @@ function renderDecisions(
       ? '_Referenční shadow run chybí._'
       : `Odchylky našel shadow run #${reference.id} nad referenční implementací: ` +
         `${cs(reference.casesReplayed)} přehraných volání, ${cs(reference.rawDiffs)} syrových rozdílů, ` +
-        `${cs(reference.noiseDiffs)} vyřešila kanonikalizace v kódu, ${cs(reference.behaviourDiffs)} došlo k člověku.`,
+        `${cs(reference.noiseDiffs)} vyřešila kanonikalizace v kódu, ${plural(reference.behaviourDiffs, 'nález došel', 'nálezy došly', 'nálezů došlo')} k člověku.`,
     '',
     decided.length === 0 ? '_Zatím nikdo nerozhodl._' : '',
     ...decided.map((d) =>
@@ -248,7 +262,7 @@ function renderBody(ctx: {
         `**${cs(green.behaviourDiffs)} změn chování**. Zápisové sety z Change Trackingu, ne z toho, co o sobě služba tvrdí.`,
     reference === undefined
       ? ''
-      : `- **Kontrola:** tentýž harness nad referenční implementací (#${reference.id}) najde ${cs(reference.behaviourDiffs)} odchylek. ` +
+      : `- **Kontrola:** tentýž harness nad referenční implementací (#${reference.id}) najde ${plural(reference.behaviourDiffs, 'odchylku', 'odchylky', 'odchylek')}. ` +
         'Stejné případy, stejná databáze, jiná implementace — takže zelený běh není zelený proto, že by diff engine přestal fungovat.',
     '',
     '## Rozhodnutí',
@@ -272,7 +286,7 @@ function renderBody(ctx: {
     '---',
     '',
     `Vygenerovala Parity, pokus ${artifacts.attempt}, artefakt \`${artifacts.runHash.slice(0, 12)}\` ` +
-      `(${artifacts.files.length} souborů, ${ctx.cases} golden testů).`,
+      `(${plural(artifacts.files.length, 'soubor', 'soubory', 'souborů')}, ${plural(ctx.cases, 'golden test', 'golden testy', 'golden testů')}).`,
     'Soubory `index.ts` a `db.ts` psala platforma — jsou kontraktem shadow harnessu. Model psal pravidla a zápisy.',
   ]
     .filter((line) => line !== '')
