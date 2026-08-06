@@ -327,6 +327,15 @@ export const oracleRuns = pgTable(
       .references(() => procedures.id, { onDelete: 'cascade' }),
     /** baseline | verify | probe — a baseline run records expectations, the others check them. */
     kind: text('kind').notNull(),
+    /**
+     * What was executed: the stored procedure, or the replacement service over HTTP.
+     *
+     * M4 only ever ran the procedure, so the column defaults to `procedure` and every row it
+     * wrote keeps its meaning. M6 runs the same expectations against the generated service —
+     * same cases, same fingerprints, different executor — which is what "the service passes
+     * all golden tests" has to mean if it is to mean anything.
+     */
+    target: text('target').notNull().default('procedure'),
     goldenPassed: integer('golden_passed').notNull().default(0),
     goldenFailed: integer('golden_failed').notNull().default(0),
     invariantsChecked: integer('invariants_checked').notNull().default(0),
@@ -391,8 +400,22 @@ export const shadowRuns = pgTable(
       .references(() => procedures.id, { onDelete: 'cascade' }),
     /** running | succeeded | failed */
     status: text('status').notNull().default('running'),
-    /** What was replayed against. M5: the hand-written stub. M6: the agent's service. */
+    /**
+     * Human label for what was replayed against, including the artefact hash the target
+     * reported at `/health`. Derived from the target, never a literal — M5 hardcoded it, and
+     * a hardcoded label would have recorded the agent's service as the hand-written one.
+     */
     implementation: text('implementation').notNull(),
+    /**
+     * Which implementation, as a value a gate can pin to: `reference` | `generated` | `aa`.
+     *
+     * The two are not interchangeable and both are permanent. The hand-written service is the
+     * positive control — the only implementation that diverges, and therefore the only proof
+     * the diff engine can still find a real behavioural difference. The generated one is the
+     * migration target and must go green. `verify-m5` pins to `reference`, `verify-m6` to
+     * `generated`, and neither can be satisfied by the other's run.
+     */
+    implementationId: text('implementation_id').notNull().default('reference'),
     /** aa is the negative control: the procedure against itself, which must find nothing. */
     kind: text('kind').notNull().default('shadow'),
     shadowDatabase: text('shadow_database').notNull(),
@@ -532,6 +555,84 @@ export const decisions = pgTable(
   (t) => [unique('uq_decision_signature').on(t.shadowRunId, t.diffSignature)],
 );
 
+/**
+ * One file of the replacement service, as the agent wrote it.
+ *
+ * The source lives here rather than on a disk Parity can reach. parity-api has no mount into
+ * `parity-platform-demo-app` and does not get one at M6: the SDK's built-in `Write` tool is
+ * not prefixed `mcp__parity__`, so `decide()` waves it through unconditionally
+ * (../agent/policy.ts) — a write mount would hand the agent a capability the tier table does
+ * not govern, does not display and cannot refuse, in the one milestone whose whole point is
+ * that the platform gates what the agent does. So the agent calls `write_service_file`, the
+ * rows land here, and a host-side step materialises them.
+ *
+ * `sha256` is per file; `runHash` is over the whole set. The deployed service reports the
+ * latter at `/health`, which is how "what ran is what the agent wrote" is a query rather than
+ * a claim — `verify-m6` reads both sides.
+ */
+export const serviceArtifacts = pgTable(
+  'service_artifacts',
+  {
+    id: serial('id').primaryKey(),
+    procedureId: integer('procedure_id')
+      .notNull()
+      .references(() => procedures.id, { onDelete: 'cascade' }),
+    agentRunId: integer('agent_run_id').references(() => agentRuns.id, { onDelete: 'set null' }),
+    /** Relative to the service's src/, and validated against a closed allowlist on write. */
+    path: text('path').notNull(),
+    contents: text('contents').notNull(),
+    sha256: text('sha256').notNull(),
+    /** Over every file of this attempt, in path order. What `/health` echoes back. */
+    runHash: text('run_hash').notNull(),
+    /** 1, 2, 3 — which round of feedback produced this. Only the highest is materialised. */
+    attempt: integer('attempt').notNull().default(1),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique('uq_service_artifact_path').on(t.procedureId, t.attempt, t.path),
+    index('ix_service_artifacts_proc').on(t.procedureId),
+  ],
+);
+
+/**
+ * A pull request Parity opened, or assembled and did not open.
+ *
+ * Assembling and opening are separate acts and separate rows-states, because opening a PR on a
+ * public repository is not reversible by a gate that runs on every commit. `status` is
+ * `assembled` until something with a person behind it commits it — the tier table refuses
+ * `open_pr` to every task class, so that something is always a human click.
+ *
+ * `branch` and `number` are stored so M7's reset can delete what the last run created.
+ */
+export const pullRequests = pgTable(
+  'pull_requests',
+  {
+    id: serial('id').primaryKey(),
+    procedureId: integer('procedure_id')
+      .notNull()
+      .references(() => procedures.id, { onDelete: 'cascade' }),
+    /** assembled | open | failed */
+    status: text('status').notNull().default('assembled'),
+    owner: text('owner').notNull(),
+    repo: text('repo').notNull(),
+    baseBranch: text('base_branch').notNull(),
+    branch: text('branch').notNull(),
+    title: text('title').notNull(),
+    /** Czech, and the whole of it — the gate asserts on this text and never on the network. */
+    body: text('body').notNull(),
+    /** [{ path, contents }] exactly as it would be committed. Assembled before anything opens. */
+    files: jsonb('files').notNull(),
+    /** Which artefact set this PR carries. Re-assembling the same one is idempotent. */
+    artifactHash: text('artifact_hash').notNull(),
+    number: integer('number'),
+    url: text('url'),
+    error: text('error'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    openedAt: timestamp('opened_at', { withTimezone: true }),
+  },
+  (t) => [unique('uq_pull_request_artifact').on(t.procedureId, t.artifactHash), index('ix_pull_requests_proc').on(t.procedureId)],
+);
+
 export const proceduresRelations = relations(procedures, ({ many }) => ({
   columns: many(procedureColumns),
 }));
@@ -558,3 +659,5 @@ export type ShadowRun = typeof shadowRuns.$inferSelect;
 export type ShadowCase = typeof shadowCases.$inferSelect;
 export type Diff = typeof diffs.$inferSelect;
 export type Decision = typeof decisions.$inferSelect;
+export type ServiceArtifact = typeof serviceArtifacts.$inferSelect;
+export type PullRequest = typeof pullRequests.$inferSelect;

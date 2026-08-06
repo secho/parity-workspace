@@ -8,6 +8,8 @@ import { connect, readCatalog } from '../ingest/mssql.js';
 import { invariantSpec, unknownIdentifiers, type InvariantSpec } from '../oracle/invariants.js';
 import { runShadow } from '../shadow/run.js';
 import { outcomeSignature } from '../capture/signature.js';
+import { ALLOWED_PATHS, nextAttempt, recordArtifact } from '../service/artifacts.js';
+import { assemblePr } from '../pr/bundle.js';
 
 /**
  * Parity's own tools, in-process — no external MCP servers to run.
@@ -32,6 +34,14 @@ export interface ToolContext {
   /** Set per run so write tools land against the right procedure. */
   procedureName: string | null;
   agentRunId: number | null;
+  /**
+   * Which attempt `write_service_file` writes under, fixed for the whole run.
+   *
+   * Derived per call it would drift mid-run: the first file would open attempt 3, and the
+   * second, seeing 3 already stored, would open 4 — leaving two half-attempts and nothing
+   * complete enough to adopt.
+   */
+  serviceAttempt?: number;
 }
 
 const text = (value: string): { content: { type: 'text'; text: string }[] } => ({
@@ -766,6 +776,118 @@ export function parityTools(context: ToolContext) {
     },
   );
 
+  /**
+   * The specification, back out of the database.
+   *
+   * `implement-service` is given a spec to reproduce, and the spec is prose written by an
+   * earlier run rather than anything on this run's disk. Handing it over in the prompt would
+   * work for one procedure and fall over on a long one; a tool keeps it out of the context
+   * until it is asked for, and puts a row in the audit log saying it was read.
+   */
+  const readSpec = tool(
+    'read_spec',
+    'Read the stored Czech specification for the procedure under analysis.',
+    { name: z.string().describe('Procedure name, e.g. sp_CalculateOrderTotal') },
+    async ({ name }) => {
+      const [row] = await context.db
+        .select({ markdown: specs.markdown })
+        .from(specs)
+        .innerJoin(procedures, eq(specs.procedureId, procedures.id))
+        .where(eq(procedures.name, name));
+      if (row === undefined) return text(`No specification has been written for ${name}.`);
+      return text(row.markdown);
+    },
+    { annotations: { readOnlyHint: true } },
+  );
+
+  /**
+   * Write one file of the replacement service.
+   *
+   * The path is checked against a closed allowlist here rather than described in the skill,
+   * for the same reason the rare-branch floor lives in `write_golden_tests` and the tolerance
+   * check lives in `write_invariants`: a rule that matters is enforced by the platform, not
+   * requested in a prompt. `index.ts` and `db.ts` are the shadow harness's contract and are
+   * not the agent's to rewrite — see ../service/artifacts.ts for why that is a claim worth
+   * making out loud rather than a limitation worth hiding.
+   *
+   * There is no matching read tool for the golden tests' recorded expectations, and there is
+   * no policy row that could permit one. An implementation fitted to the oracle is not
+   * measured by it.
+   */
+  const writeServiceFile = tool(
+    'write_service_file',
+    'Write one source file of the replacement service. Only the business-logic files are writable; the HTTP shell belongs to the migration harness.',
+    {
+      path: z
+        .enum(ALLOWED_PATHS)
+        .describe('Which file, relative to the service src/. pricing.ts computes, persist.ts writes.'),
+      contents: z.string().describe('The complete file. Node 22 + TypeScript, ESM, importing only fastify and mssql.'),
+    },
+    async ({ path, contents }) => {
+      if (context.procedureName === null) return text('No procedure is under analysis in this run.');
+      const [row] = await context.db.select().from(procedures).where(eq(procedures.name, context.procedureName));
+      if (row === undefined) return text(`No procedure named ${context.procedureName}.`);
+
+      // Imports are checked here too. The container installs its dependencies at build time,
+      // so a service that reaches for a package nobody installed does not fail at review — it
+      // fails four hundred replay cases into a shadow run, as a connection refused.
+      const imported = [...contents.matchAll(/^\s*import\s[^;]*?from\s+['"]([^'"]+)['"]/gm)].map((m) => m[1]);
+      const foreign = imported.filter((s) => !s.startsWith('.') && !s.startsWith('node:') && s !== 'fastify' && s !== 'mssql');
+      if (foreign.length > 0) {
+        return text(
+          `Refused: ${path} imports ${foreign.join(', ')}. The service container installs only fastify and mssql at build time, so nothing else can resolve at runtime. Rewrite using those two and the Node standard library.`,
+        );
+      }
+
+      const attempt = context.serviceAttempt ?? (await nextAttempt(context.db, row.id));
+      const stored = await recordArtifact(context.db, {
+        procedureId: row.id,
+        agentRunId: context.agentRunId,
+        attempt,
+        path,
+        contents,
+      });
+      return text(
+        `Stored ${path} (${contents.length} characters, sha256 ${stored.sha256.slice(0, 12)}) as attempt ${attempt} of the ${context.procedureName} service.`,
+      );
+    },
+  );
+
+  /**
+   * Open the pull request.
+   *
+   * Tier 3 for every task class, so the hook refuses it and the PR waits for a person — the
+   * same shape as `record_decision` and for the same reason. The tool is fully implemented,
+   * which is what makes the refusal mean something: `probe-pr` provokes it live rather than
+   * reading the policy table back, because `seedPolicy` writes that table unconditionally and
+   * a check against it could not fail.
+   *
+   * Assembling is not opening. This tool assembles the branch, the files and the Czech body
+   * and persists them either way; whether it also pushes is the human's click.
+   */
+  const openPr = tool(
+    'open_pr',
+    'Open a pull request carrying the specification, the golden tests, the generated service and the recorded decision.',
+    {
+      name: z.string().describe('Procedure name the migration is for'),
+      summary_cs: z.string().describe('Two or three sentences, in Czech, on what this change does'),
+      fix_candidates_cs: z
+        .string()
+        .describe('Defects reproduced deliberately and what the correct behaviour would be. Czech. Empty string if none.'),
+    },
+    async ({ name, summary_cs, fix_candidates_cs }) => {
+      const assembled = await assemblePr(context.db, context.config, {
+        procedureName: name,
+        summaryCs: summary_cs,
+        fixCandidatesCs: fix_candidates_cs,
+      });
+      if (assembled === null) return text(`Nothing to open a PR for: ${name} has no generated service yet.`);
+      return text(
+        `Assembled a pull request for ${name}: branch ${assembled.branch}, ${(assembled.files as { path: string }[]).length} files, ${assembled.body.length} characters of body. It has NOT been opened — that is a human's click.`,
+      );
+    },
+  );
+
   return createSdkMcpServer({
     name: 'parity',
     version: '1.0.0',
@@ -782,6 +904,9 @@ export function parityTools(context: ToolContext) {
       classifyDiff,
       runShadowTool,
       recordDecision,
+      readSpec,
+      writeServiceFile,
+      openPr,
     ],
   });
 }
@@ -798,5 +923,7 @@ export const TOOL = {
   classifyDiff: 'mcp__parity__classify_diff',
   runShadow: 'mcp__parity__run_shadow',
   recordDecision: 'mcp__parity__record_decision',
+  readSpec: 'mcp__parity__read_spec',
+  writeServiceFile: 'mcp__parity__write_service_file',
   openPr: 'mcp__parity__open_pr',
 } as const;

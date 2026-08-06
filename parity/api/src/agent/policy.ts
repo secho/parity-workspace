@@ -61,12 +61,36 @@ export const DEFAULT_POLICY: { taskClass: string; toolName: string; tier: number
   { taskClass: 'diff', toolName: 'mcp__parity__run_shadow', tier: 3, requiresHuman: true, note: 'mimo rozsah classify-diff' },
   { taskClass: 'diff', toolName: 'mcp__parity__record_decision', tier: 3, requiresHuman: true, note: 'o změně chování rozhoduje člověk' },
 
-  // Nothing opens a PR or records a decision without a person. Wired at M6/M7; the rule
-  // exists now so the tier table on the Provoz page is the real one from the start.
+  // Writing the replacement reads everything that describes the behaviour it must reproduce —
+  // the source, the traffic, the spec, the invariants — and writes one thing: the service's
+  // own source, through a tool that validates every path against a closed allowlist.
+  //
+  // It may NOT read the golden tests' recorded expectations. There is no tool that returns
+  // them, and there is no rule here that could permit one: an implementation fitted to the
+  // oracle is not measured by it. The agent gets the case *names* and the branches they
+  // cover, which is a description of the job, not the answer to it.
+  //
+  // It may not re-run the shadow harness, for the same reason `classify-diff` may not — an
+  // implementer that could re-run the experiment it is being judged by could keep going until
+  // it liked the answer. Parity runs it, once per attempt, and feeds the result back.
+  { taskClass: 'service', toolName: 'mcp__parity__read_procedure', tier: 1, requiresHuman: false, note: 'čtení zdroje procedury' },
+  { taskClass: 'service', toolName: 'mcp__parity__query_capture', tier: 1, requiresHuman: false, note: 'čtení zachyceného provozu' },
+  { taskClass: 'service', toolName: 'mcp__parity__read_spec', tier: 1, requiresHuman: false, note: 'čtení specifikace' },
+  { taskClass: 'service', toolName: 'mcp__parity__write_service_file', tier: 2, requiresHuman: false, note: 'zápis zdroje služby' },
+  { taskClass: 'service', toolName: 'mcp__parity__write_spec', tier: 3, requiresHuman: true, note: 'mimo rozsah implement-service' },
+  { taskClass: 'service', toolName: 'mcp__parity__write_triage', tier: 3, requiresHuman: true, note: 'mimo rozsah implement-service' },
+  { taskClass: 'service', toolName: 'mcp__parity__write_golden_tests', tier: 3, requiresHuman: true, note: 'implementace si nepíše vlastní testy' },
+  { taskClass: 'service', toolName: 'mcp__parity__run_shadow', tier: 3, requiresHuman: true, note: 'shadow run spouští platforma, ne implementace' },
+  { taskClass: 'service', toolName: 'mcp__parity__record_decision', tier: 3, requiresHuman: true, note: 'o změně chování rozhoduje člověk' },
+
+  // Nothing opens a PR without a person. The tool is fully implemented at M6 — that is what
+  // makes the refusal mean something, the same argument `record_decision` has carried since
+  // M5 — and `probe-pr` provokes it live rather than reading the table back.
   { taskClass: 'triage', toolName: 'mcp__parity__open_pr', tier: 3, requiresHuman: true, note: 'PR vždy přes člověka' },
   { taskClass: 'spec', toolName: 'mcp__parity__open_pr', tier: 3, requiresHuman: true, note: 'PR vždy přes člověka' },
   { taskClass: 'oracle', toolName: 'mcp__parity__open_pr', tier: 3, requiresHuman: true, note: 'PR vždy přes člověka' },
   { taskClass: 'diff', toolName: 'mcp__parity__open_pr', tier: 3, requiresHuman: true, note: 'PR vždy přes člověka' },
+  { taskClass: 'service', toolName: 'mcp__parity__open_pr', tier: 3, requiresHuman: true, note: 'PR vždy přes člověka' },
 ];
 
 export async function seedPolicy(db: Db): Promise<void> {

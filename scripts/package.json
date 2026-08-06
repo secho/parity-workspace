@@ -9,7 +9,9 @@
     "verify-m2": "tsx verify-m2.ts",
     "verify-m3": "tsx verify-m3.ts",
     "verify-m4": "tsx verify-m4.ts",
-    "verify-m5": "tsx verify-m5.ts"
+    "verify-m5": "tsx verify-m5.ts",
+    "verify-m6": "tsx verify-m6.ts",
+    "adopt-service": "tsx adopt-service.ts"
   },
   "dependencies": {
     "mssql": "^11.0.1",

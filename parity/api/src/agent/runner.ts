@@ -41,6 +41,8 @@ export async function executeRun(
   config: Config,
   request: StartRun,
   onStep?: StepListener,
+  /** Extra context the write tools need. Only `implement-service` uses it so far. */
+  extra?: { serviceAttempt?: number },
 ): Promise<RunHandle> {
   const skills = await loadSkills(config.skillsDir);
   const skill = await findSkill(config.skillsDir, request.skillName);
@@ -70,6 +72,7 @@ export async function executeRun(
     config,
     procedureName: request.procedureName,
     agentRunId: run.id,
+    serviceAttempt: extra?.serviceAttempt,
   };
 
   const blocked: { toolName: string; reason: string }[] = [];
@@ -223,6 +226,30 @@ it, so it is not resolvable mechanically.
 
 Record your verdict with classify_diff, using the signature exactly as given:
   ${finding}`,
+});
+
+/**
+ * Write the replacement.
+ *
+ * The one thing withheld is the golden tests' recorded expectations. There is no tool that
+ * returns them and no policy row that could permit one — an implementation fitted to the
+ * oracle is not measured by it. What the agent gets is the case *names* and the branches they
+ * cover, which describes the job rather than answering it. Same division of labour as
+ * `write_golden_tests` taking invocation ids instead of parameter values, and as the invariants
+ * being evaluated in code.
+ *
+ * It cannot run the shadow harness either. An implementer able to re-run the experiment it is
+ * judged by could keep going until it liked the answer; Parity runs it once per attempt and
+ * hands back what failed. That feedback is what makes a second attempt a correction rather
+ * than a re-roll — and hard rule 5 is why it matters that it is a correction.
+ */
+export const implementServiceRun = (procedureName: string, brief: string): StartRun => ({
+  skillName: 'implement-service',
+  taskClass: 'service',
+  procedureName,
+  maxTurns: 40,
+  allowedTools: [TOOL.readProcedure, TOOL.queryCapture, TOOL.readSpec, TOOL.writeServiceFile],
+  prompt: brief,
 });
 
 export const oracleRun = (procedureName: string): StartRun => ({
