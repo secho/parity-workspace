@@ -36,6 +36,19 @@ remount:
 	@docker compose exec -T parity-api ls /app/src >/dev/null 2>&1 && echo "  api mount ok" || { echo "  api mount STILL EMPTY"; exit 1; }
 	@docker compose exec -T parity-web ls /app/src >/dev/null 2>&1 && echo "  web mount ok" || { echo "  web mount STILL EMPTY"; exit 1; }
 	@docker compose exec -T pricing-service ls /app/src >/dev/null 2>&1 && echo "  pricing mount ok" || { echo "  pricing mount STILL EMPTY"; exit 1; }
+	@docker compose exec -T pricing-service-generated ls /app/src >/dev/null 2>&1 && echo "  generated mount ok" || { echo "  generated mount STILL EMPTY"; exit 1; }
+	@docker compose exec -T pricing-service-live ls /app/src >/dev/null 2>&1 && echo "  live mount ok" || { echo "  live mount STILL EMPTY"; exit 1; }
+	@# The artefact hash both generated instances report has to be the one on disk. A container
+	@# serving a stale copy is the M5 failure this whole target exists for, and here it would be
+	@# invisible: /health answers `ok` either way, and the shadow run would replay 400 cases
+	@# against whichever source the process happened to still have in memory.
+	@printf "  artefact "; \
+	 disk=$$(cat parity-platform-demo-app/pricing-service-generated/src/.artifact 2>/dev/null || echo none); \
+	 for port in $${PRICING_SERVICE_GENERATED_PORT:-3301} $${PRICING_SERVICE_LIVE_PORT:-3302}; do \
+	   served=$$(curl -sf http://127.0.0.1:$$port/health | sed -n 's/.*"artifact":"\([^"]*\)".*/\1/p'); \
+	   [ "$$served" = "$$disk" ] || { echo "MISMATCH on $$port: serving $${served:-none}, disk has $$disk"; exit 1; }; \
+	 done; \
+	 echo "$$(echo $$disk | cut -c1-12) ok on both"
 
 seed:
 	npm --prefix parity-platform-demo-app/seed install --silent
