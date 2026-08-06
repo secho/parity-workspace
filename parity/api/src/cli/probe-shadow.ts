@@ -62,7 +62,11 @@ const context = { tracked: await readTrackedTables(pool), columns: await readCol
 await pool.close();
 
 const reset = async (): Promise<void> => {
+  // Both, not just the reference. Once the generated container has served this procedure it
+  // holds a pool, and RESTORE waits on an open connection rather than failing — so missing one
+  // does not produce an error, it produces a probe that hangs forever.
   await releaseService(config.pricingServiceUrl);
+  await releaseService(config.generatedServiceUrl);
   await revertShadow(config);
 };
 
@@ -123,6 +127,7 @@ for (const [index, entry] of aa.entries()) {
 
     perturbation = {
       attempted: true,
+      scope: 'write_set',
       seq: entry.seq,
       sourceInvocationId: entry.sourceInvocationId,
       table,
@@ -136,6 +141,57 @@ for (const [index, entry] of aa.entries()) {
       cleanAgain: diffCase(passA[index], passB[index], { identityColumns }).diffs.every((d) => d.canonicalEqual),
     };
     break;
+  }
+}
+
+/**
+ * The same control, for a procedure that writes nothing.
+ *
+ * `sp_GetCartSummary` produces its answer entirely in result sets, so the write-set loop above
+ * finds nothing to corrupt and reports `attempted: false` — which reads exactly like a pass and
+ * is the failure this whole probe exists to prevent. The output is in a different place, so the
+ * perturbation goes in a different place; the claim being tested is unchanged.
+ */
+if (perturbation.attempted !== true) {
+  for (const [index, entry] of aa.entries()) {
+    if (perturbation.attempted === true) break;
+    const sets = passB[index].resultSets;
+
+    for (const [setIndex, rows] of sets.entries()) {
+      const rowIndex = rows.findIndex(
+        (row) => row !== null && typeof row === 'object' && Object.values(row as object).some((v) => typeof v === 'number'),
+      );
+      if (rowIndex === -1) continue;
+
+      const row = rows[rowIndex] as Record<string, unknown>;
+      const column = Object.keys(row).find((k) => typeof row[k] === 'number')!;
+      const before = row[column] as number;
+
+      const corrupted: ReplayOutcome = {
+        ...passB[index],
+        resultSets: sets.map((set, i) =>
+          i !== setIndex ? set : set.map((r, j) => (j === rowIndex ? { ...(r as object), [column]: before + 1 } : r)),
+        ),
+      };
+
+      const corruptedDiff = diffCase(passA[index], corrupted, { identityColumns });
+      const detected = corruptedDiff.diffs.filter((d) => !d.canonicalEqual);
+
+      perturbation = {
+        attempted: true,
+        scope: 'result_set',
+        seq: entry.seq,
+        sourceInvocationId: entry.sourceInvocationId,
+        table: `rs${setIndex}`,
+        column,
+        before,
+        after: before + 1,
+        detected: detected.length,
+        signatures: detected.map((d) => d.signature),
+        cleanAgain: diffCase(passA[index], passB[index], { identityColumns }).diffs.every((d) => d.canonicalEqual),
+      };
+      break;
+    }
   }
 }
 

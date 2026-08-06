@@ -108,9 +108,13 @@ async function main(): Promise<void> {
     );
     check(suites.rows[0].n >= 8, 'golden suites on at least 8 procedures', `${suites.rows[0].n}`);
 
+    // Scoped to THIS procedure. Unscoped, "the latest reference run" becomes whichever
+    // procedure was replayed most recently — and from M7 there is more than one.
     const referenceRun = await client.query(
       `SELECT * FROM shadow_runs WHERE implementation_id = 'reference' AND status = 'succeeded' AND kind = 'shadow'
+         AND procedure_id = (SELECT id FROM procedures WHERE name = $1)
        ORDER BY id DESC LIMIT 1`,
+      [TARGET],
     );
     check(referenceRun.rowCount === 1, 'the reference shadow run is still there', referenceRun.rows[0]?.implementation ?? '');
     check(
@@ -255,7 +259,9 @@ async function main(): Promise<void> {
 
     const green = await client.query(
       `SELECT * FROM shadow_runs WHERE implementation_id = 'generated' AND kind = 'shadow'
+         AND procedure_id = (SELECT id FROM procedures WHERE name = $1)
        ORDER BY id DESC LIMIT 1`,
+      [TARGET],
     );
     check(green.rowCount === 1, 'a shadow run against the generated service exists');
     const g = green.rows[0] ?? {};
