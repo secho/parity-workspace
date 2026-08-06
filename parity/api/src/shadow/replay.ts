@@ -156,7 +156,10 @@ export interface ServiceHealth {
   status: string;
   database: string;
   implementation?: string;
-  artifact?: string | null;
+  /** Which procedures this instance has an adopted implementation for. */
+  procedures?: string[];
+  /** procedure -> artefact hash. A map, because one container serves several procedures. */
+  artifacts?: Record<string, string | null>;
 }
 
 /**

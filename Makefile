@@ -42,13 +42,16 @@ remount:
 	@# serving a stale copy is the M5 failure this whole target exists for, and here it would be
 	@# invisible: /health answers `ok` either way, and the shadow run would replay 400 cases
 	@# against whichever source the process happened to still have in memory.
-	@printf "  artefact "; \
-	 disk=$$(cat parity-platform-demo-app/pricing-service-generated/src/.artifact 2>/dev/null || echo none); \
-	 for port in $${PRICING_SERVICE_GENERATED_PORT:-3301} $${PRICING_SERVICE_LIVE_PORT:-3302}; do \
-	   served=$$(curl -sf http://127.0.0.1:$$port/health | sed -n 's/.*"artifact":"\([^"]*\)".*/\1/p'); \
-	   [ "$$served" = "$$disk" ] || { echo "MISMATCH on $$port: serving $${served:-none}, disk has $$disk"; exit 1; }; \
-	 done; \
-	 echo "$$(echo $$disk | cut -c1-12) ok on both"
+	@for d in parity-platform-demo-app/pricing-service-generated/src/*/; do \
+	   proc=$$(basename $$d); \
+	   [ -f "$$d/.artifact" ] || continue; \
+	   disk=$$(cat "$$d/.artifact"); \
+	   for port in $${PRICING_SERVICE_GENERATED_PORT:-3301} $${PRICING_SERVICE_LIVE_PORT:-3302}; do \
+	     served=$$(curl -sf http://127.0.0.1:$$port/health | python3 -c "import sys,json;print(json.load(sys.stdin).get('artifacts',{}).get('$$proc') or '')"); \
+	     [ "$$served" = "$$disk" ] || { echo "  artefact MISMATCH $$proc on $$port: serving $${served:-none}, disk has $$disk"; exit 1; }; \
+	   done; \
+	   echo "  artefact $$proc $$(echo $$disk | cut -c1-12) ok on both"; \
+	 done
 
 seed:
 	npm --prefix parity-platform-demo-app/seed install --silent

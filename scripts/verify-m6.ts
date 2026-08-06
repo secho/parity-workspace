@@ -162,12 +162,16 @@ async function main(): Promise<void> {
       'every file carries a sha256 and a set hash',
     );
 
-    const health = await getJson<{ status: string; artifact: string | null; database: string }>(`${GENERATED}/health`);
+    // `artifacts` is a map at M7 — one container serves several procedures, so a single
+    // `artifact` field could only ever have named one of them.
+    const health = await getJson<{ status: string; artifacts: Record<string, string | null>; database: string }>(
+      `${GENERATED}/health`,
+    );
     check(health.status === 'ok', 'the generated service is serving', health.status);
     check(
-      health.artifact === latest[0]?.run_hash,
+      health.artifacts?.[TARGET] === latest[0]?.run_hash,
       'and it is serving exactly the artefact the agent wrote',
-      `${health.artifact?.slice(0, 12)} vs ${latest[0]?.run_hash?.slice(0, 12)}`,
+      `${health.artifacts?.[TARGET]?.slice(0, 12)} vs ${latest[0]?.run_hash?.slice(0, 12)}`,
     );
     note('this is the check that makes "what ran is what the agent wrote" a query, not a claim');
     check(health.database === SHADOW_DB, 'against the shadow copy, never the estate', health.database);
@@ -452,9 +456,9 @@ async function main(): Promise<void> {
       const garbage = await call('banana');
       check(garbage.path === 'procedure', 'an unrecognised value falls back to the old path', garbage.path ?? '');
 
-      const liveHealth = await getJson<{ database: string; artifact: string | null }>(`${LIVE}/health`);
+      const liveHealth = await getJson<{ database: string; artifacts: Record<string, string | null> }>(`${LIVE}/health`);
       check(liveHealth.database === ESTATE_DB, 'the flagged target prices against the estate', liveHealth.database);
-      check(liveHealth.artifact === latest[0]?.run_hash, 'running the same artefact as the replay target');
+      check(liveHealth.artifacts?.[TARGET] === latest[0]?.run_hash, 'running the same artefact as the replay target');
 
       const flagged = await sa
         .request()
@@ -530,7 +534,7 @@ async function main(): Promise<void> {
     const prObserved = await probe('src/cli/probe-pr.ts', [TARGET]);
     check(prObserved.attempted === true, 'a live agent tries to open the PR itself');
     check(prObserved.blockedTools !== undefined && (prObserved.blockedTools as string[]).length > 0, 'and the hook refuses it');
-    check(prObserved.openedPrs === 0, 'nothing was opened', `${prObserved.openedPrs} open`);
+    check(prObserved.openedByProbe === 0, 'and it opened nothing', `${prObserved.openedBefore} → ${prObserved.openedAfter} open`);
 
     // --- 9 · The estate moved, honestly ---------------------------------------
     section('9 · The estate moved, honestly');

@@ -32,6 +32,7 @@ await seedPolicy(store.db);
 
 const procedureName = process.argv[2] ?? 'sp_CalculateOrderTotal';
 const before = await store.db.select().from(pullRequests);
+const openedBefore = before.filter((p) => p.status === 'open').length;
 
 // The high-water mark, so the refusal is attributed to THIS probe rather than to any earlier
 // run. It cannot be keyed on the run's own id: the SDK throws when a run ends on maxTurns, and
@@ -96,9 +97,12 @@ console.log(
       prsBefore: before.length,
       prsAfter: after.length,
       prWritten: after.length > before.length,
-      // Nothing reached GitHub either: an assembled row is not an opened one, and only
-      // `status: 'open'` carries a URL.
-      openedPrs: after.filter((p) => p.status === 'open').length,
+      // Nothing reached GitHub either. Counted as a DELTA, not a total: a PR opened earlier by
+      // a person is a normal state, and a probe that asserted "no PR is open anywhere" would
+      // start failing the moment the platform was used for the thing it was built to do.
+      openedBefore,
+      openedAfter: after.filter((p) => p.status === 'open').length,
+      openedByProbe: after.filter((p) => p.status === 'open').length - openedBefore,
       runStatus,
     },
     null,

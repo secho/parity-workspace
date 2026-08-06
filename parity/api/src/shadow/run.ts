@@ -116,6 +116,16 @@ export async function runShadow(db: Db, config: Config, options: ShadowOptions):
           (health.status === 'awaiting_artifact' ? '. Run `make implement-service && make adopt-service`.' : ''),
       );
     }
+    // Asked before a single case is replayed. Without it, a procedure this instance does not
+    // serve gets 503 on every case, and the diff engine records each one as a behavioural
+    // difference on a run whose status still reads `succeeded`.
+    if (health.procedures !== undefined && !health.procedures.includes(options.procedureName)) {
+      throw new Error(
+        `${implementationId} service does not serve ${options.procedureName} — it has ${
+          health.procedures.length === 0 ? 'no adopted implementation' : health.procedures.join(', ')
+        }`,
+      );
+    }
     if (health.database !== config.mssql.shadowDatabase) {
       // The claim the whole milestone rests on. A replacement pointed at the estate would be
       // writing to production while the run reported it was not.
@@ -123,7 +133,7 @@ export async function runShadow(db: Db, config: Config, options: ShadowOptions):
     }
     implementation =
       implementationId === 'generated'
-        ? `pricing-service-generated (agent, artefact ${health.artifact?.slice(0, 12) ?? 'unknown'})`
+        ? `pricing-service-generated (agent, artefact ${health.artifacts?.[options.procedureName]?.slice(0, 12) ?? 'unknown'})`
         : 'pricing-service (hand-written, M5 reference)';
   }
 

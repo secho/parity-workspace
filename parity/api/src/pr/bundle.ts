@@ -24,6 +24,9 @@ import { openPullRequest, type CommitFile } from './github.js';
 const MIGRATION_DOCS = 'docs/migrations';
 const SERVICE_SRC = 'parity-platform-demo-app/pricing-service-generated/src';
 
+/** One directory per procedure, so two migrations never write over each other's files. */
+const serviceSrcFor = (procedureName: string): string => `${SERVICE_SRC}/${procedureName}`;
+
 export interface AssembleInput {
   procedureName: string;
   summaryCs: string;
@@ -95,7 +98,7 @@ export async function assemblePr(db: Db, config: Config, input: AssembleInput): 
     .limit(1);
 
   const files: CommitFile[] = [
-    ...artifacts.files.map((f) => ({ path: `${SERVICE_SRC}/${f.path}`, contents: f.contents })),
+    ...artifacts.files.map((f) => ({ path: `${serviceSrcFor(procedure.name)}/${f.path}`, contents: f.contents })),
     {
       path: `${MIGRATION_DOCS}/${procedure.name}/spec.md`,
       contents: spec?.markdown ?? `# ${procedure.name}\n\nSpecifikace zatím nebyla vygenerována.\n`,
