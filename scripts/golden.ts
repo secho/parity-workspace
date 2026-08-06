@@ -19,6 +19,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import { SNAPSHOT_TABLES } from './snapshot-tables.js';
 
 const exec = promisify(execFile);
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -27,40 +28,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SNAPSHOT = join(ROOT, 'scripts', 'golden-run.sql.gz');
 const COUNTS = join(ROOT, 'scripts', 'golden-run.counts.json');
 
-/**
- * Exactly the tables `resetState()` empties — the fifteen it names plus the four it reaches by
- * CASCADE. Not a superset and not a subset: a table in the reset but not the snapshot is state
- * the demo cannot get back, and a table in the snapshot but not the reset is state that
- * survives a reset and would be restored on top of itself.
- *
- * `policy_rules` is deliberately absent from both. It is configuration, reasserted on every
- * boot by `seedPolicy`, and snapshotting it would make the tier table a thing that could drift
- * from the repository.
- *
- * `verify-m7` cross-checks this list empirically — after `make demo-reset`, every table here
- * must be empty — so the two cannot drift apart silently.
- */
-export const SNAPSHOT_TABLES = [
-  'procedures',
-  'procedure_columns',
-  'procedure_calls',
-  'coupling_edges',
-  'specs',
-  'agent_runs',
-  'agent_steps',
-  'audit_entries',
-  'golden_tests',
-  'invariants',
-  'oracle_runs',
-  'golden_results',
-  'invariant_results',
-  'shadow_runs',
-  'shadow_cases',
-  'diffs',
-  'decisions',
-  'service_artifacts',
-  'pull_requests',
-] as const;
+
 
 const psql = (database: string, sql: string): Promise<{ stdout: string }> =>
   exec('docker', ['compose', 'exec', '-T', 'parity-postgres', 'psql', '-U', 'parity', '-d', database, '-tAc', sql], {

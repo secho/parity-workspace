@@ -114,8 +114,8 @@ export function Provoz(): JSX.Element {
                 <td className="mono subtle">{entry.skill}</td>
                 <td className="name">{entry.toolName}</td>
                 <td>
-                  <span className={`chip ${entry.outcome === 'blocked' ? 'bad' : 'good'}`}>
-                    {entry.outcome === 'blocked' ? cs.ops.outcomeBlocked : cs.ops.outcomeAllowed}
+                  <span className={`chip ${cs.ops.outcomes[entry.outcome]?.tone ?? 'none'}`}>
+                    {cs.ops.outcomes[entry.outcome]?.label ?? entry.outcome}
                   </span>
                 </td>
                 <td className="num">{entry.durationMs === null ? cs.common.none : `${entry.durationMs} ms`}</td>

@@ -3,6 +3,7 @@ import { eq } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { agentRuns, agentSteps, auditEntries, procedures } from '../db/schema.js';
 import type { Config } from '../env.js';
+import { replayAgentRun } from '../replay/serve.js';
 import { llmEndpoint, runSkill, type RunResult } from './client.js';
 import { buildHooks } from './hooks.js';
 import { loadPolicy } from './policy.js';
@@ -44,6 +45,12 @@ export async function executeRun(
   /** Extra context the write tools need. Only `implement-service` uses it so far. */
   extra?: { serviceAttempt?: number },
 ): Promise<RunHandle> {
+  // Replay is decided here, before a workspace is built or a skill is read, because every line
+  // below this one exists to reach a model. Everything a caller can observe — the run row, the
+  // steps arriving on the SSE stream at the recorded cadence, the handle that comes back — is
+  // the same shape; what differs is that nothing is spent and the row says `replayed_from`.
+  if (config.mode === 'replay') return replayAgentRun(db, config, request, onStep);
+
   const skills = await loadSkills(config.skillsDir);
   const skill = await findSkill(config.skillsDir, request.skillName);
   const runId = randomUUID();

@@ -1,4 +1,4 @@
-import { and, asc, desc, eq } from 'drizzle-orm';
+import { and, asc, desc, eq, isNull } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { agentRuns, agentSteps, procedures } from '../db/schema.js';
 
@@ -37,6 +37,8 @@ export interface Recording {
   skill: string;
   procedureName: string | null;
   model: string | null;
+  provider: string | null;
+  output: string | null;
   numTurns: number | null;
   costUsd: string | null;
   durationMs: number | null;
@@ -53,6 +55,11 @@ export const replaySpeed = (): number => {
  *
  * Newest rather than first: a procedure re-run after a correction has two recordings, and the
  * one worth showing is the one whose artefacts are the ones on screen.
+ *
+ * `replayed_from IS NULL` excludes replays of replays. Their steps would be identical, so this
+ * changes nothing visible — but a recording is a run that happened, and the model and turn count
+ * carried forward should be the ones a model actually produced. After three rehearsals the
+ * newest run of a skill is a replay, and without this the chain would be four deep.
  */
 export async function findRecording(
   db: Db,
@@ -64,6 +71,8 @@ export async function findRecording(
       runId: agentRuns.runId,
       skill: agentRuns.skill,
       model: agentRuns.model,
+      provider: agentRuns.provider,
+      output: agentRuns.output,
       numTurns: agentRuns.numTurns,
       costUsd: agentRuns.costUsd,
       durationMs: agentRuns.durationMs,
@@ -75,6 +84,7 @@ export async function findRecording(
         eq(procedures.name, options.procedureName),
         eq(agentRuns.skill, options.skill),
         eq(agentRuns.status, 'succeeded'),
+        isNull(agentRuns.replayedFrom),
       ),
     )
     .orderBy(desc(agentRuns.id))
@@ -99,6 +109,8 @@ export async function findRecording(
     skill: chosen.skill,
     procedureName: options.procedureName,
     model: chosen.model,
+    provider: chosen.provider,
+    output: chosen.output,
     numTurns: chosen.numTurns,
     costUsd: chosen.costUsd,
     durationMs: chosen.durationMs,
@@ -119,13 +131,22 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
  * The listener is the same `onStep` callback a live run feeds, so the browser is on an
  * identical code path and genuinely cannot tell the difference. That is the claim, and it is
  * only true because nothing here reshapes the event.
+ *
+ * `emit` may be async and is awaited: a served replay writes the step row before announcing it,
+ * because `Procedure.tsx` treats the SSE event as a signal to refetch and reads the payload
+ * from the table. Announcing first would race the browser against the insert.
  */
 export async function playRecording(
   recording: Recording,
-  emit: (step: { seq: number; kind: string; toolName: string | null; text: string | null }) => void,
+  emit: (step: {
+    seq: number;
+    kind: string;
+    toolName: string | null;
+    text: string | null;
+  }) => void | Promise<void>,
 ): Promise<void> {
   for (const step of recording.steps) {
     if (step.delayMs > 0) await sleep(step.delayMs);
-    emit({ seq: step.seq, kind: step.kind, toolName: step.toolName, text: step.text });
+    await emit({ seq: step.seq, kind: step.kind, toolName: step.toolName, text: step.text });
   }
 }

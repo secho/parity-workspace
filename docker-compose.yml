@@ -256,7 +256,15 @@ services:
       GITHUB_REPO: "${GITHUB_REPO:-parity-workspace}"
       GITHUB_BASE_BRANCH: "${GITHUB_BASE_BRANCH:-main}"
       PORT: "3000"
+      # live | replay. In replay, an agent run and a shadow run are served from the recordings
+      # in Postgres instead of from a model — same rows, same SSE path, same cadence, nothing
+      # spent and nothing touched. `make restore-golden` is what puts those recordings back
+      # after a reset, and a replay with no recording refuses rather than emitting nothing.
       PARITY_MODE: "${PARITY_MODE:-live}"
+      # Divides the recorded gaps. 1 is the honest default — the replay takes exactly as long as
+      # the run did. Anything above it is a compression, and `docs/DEMO-SCRIPT.md` says which
+      # stretches are compressed out loud.
+      PARITY_REPLAY_SPEED: "${PARITY_REPLAY_SPEED:-1}"
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
       # Point this at a LiteLLM-compatible endpoint to route through a gateway. Alza
       # already runs one; Parity is a client of a gateway and never one itself, so this

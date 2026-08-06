@@ -4,6 +4,7 @@ import { decisions, diffs as diffsTable, procedures, shadowCases, shadowRuns } f
 import type { Config } from '../env.js';
 import { connect } from '../ingest/mssql.js';
 import { readIdentityColumns, readParameters } from '../oracle/execute.js';
+import { replayShadowRun } from '../replay/serve.js';
 import { selectCases, DEFAULT_CASE_LIMIT } from './cases.js';
 import { readColumns, readTrackedTables } from './changetracking.js';
 import { connectShadowRunner, revertShadow, shadowReadiness } from './database.js';
@@ -65,9 +66,27 @@ export interface ShadowResult {
   /** Derived from the target's /health, including the artefact hash it is serving. */
   implementation: string;
   implementationId: string;
+  /** Set only in replay mode: the recorded run this one re-materialised. */
+  replayedFrom?: number | null;
 }
 
 export async function runShadow(db: Db, config: Config, options: ShadowOptions): Promise<ShadowResult> {
+  // `PARITY_MODE=replay`, decided before anything opens a connection. That is not an
+  // optimisation: the claim a replayed run makes is that both database fingerprints are
+  // untouched, and the only way to make it true rather than argued is to never connect.
+  if (config.mode === 'replay') {
+    const replayed = await replayShadowRun(db, config, options);
+    if ((options.kind ?? 'shadow') !== 'aa') {
+      await promoteAfterShadow(
+        db,
+        replayed.procedureId,
+        replayed.result.implementationId as ShadowImplementation,
+        replayed.findingCount,
+      );
+    }
+    return replayed.result;
+  }
+
   const started = Date.now();
   const kind: ShadowKind = options.kind ?? 'shadow';
   const limit = options.limit ?? DEFAULT_CASE_LIMIT;

@@ -98,7 +98,7 @@ Fourteen procedures. Ten live, one rarely called, three dead. The oracle-class s
 | 1 | `sp_GetProductDetail` | Single product + stock + price | `pure_read` | Easy tier-1 example |
 | 2 | `sp_SearchProducts` | Filter, sort, page over `Catalog` | `pure_read` | **Ordering trap** — no `ORDER BY` on ties, so replays legitimately differ. Feeds the noise classifier. |
 | 3 | `sp_GetProductAvailability` | Availability across 3 warehouses | `pure_read` | High invocation volume; hot path |
-| 4 | `sp_GetCartSummary` | Cart totals, read-only | `pure_read` | Calls into #5's logic by copy-paste — duplication the spec surfaces |
+| 4 | `sp_GetCartSummary` | Cart totals, read-only | `nondet` — writes nothing, and still is not replayable, because it branches on the clock | **The second procedure.** Proves the lane is a lane and not one bespoke path. Migrated to a service at M7, and deliberately **not** `proven`: it has no reference implementation, so nothing about it has ever been shown to diverge. |
 | 5 | `sp_CalculateOrderTotal` | Line items, discounts, promo, VAT, shipping, loyalty | `det_write` (computes, writes a cache row) | **The migration target.** Money, deterministic, invariant-rich. |
 | 6 | `sp_ReserveStock` | Decrements stock, writes reservation + `StockMovement` + `AuditTrail` | `det_write` | Multi-table write set — proves write-set diffing |
 | 7 | `sp_ApplyPromoCode` | Stacking rules, validity windows, per-customer limits | `det_write` | Nasty edge cases; long-tail coverage story |
@@ -109,6 +109,12 @@ Fourteen procedures. Ten live, one rarely called, three dead. The oracle-class s
 | 12 | `sp_ExportCatalogXml_OLD` | Zero invocations | `pure_read` | Dead → phase 0 |
 | 13 | `sp_MigrateCustomerAddresses` | Zero invocations | `det_write` | Dead → phase 0 |
 | 14 | `sp_RecomputeLoyaltyTier_deprecated` | Zero invocations | `det_write` | Dead → phase 0 |
+
+The oracle classes above are the **design intent**. Where triage disagreed with one, triage wins
+and the table has been corrected — `sp_GetCartSummary` was written down as `pure_read` and is
+`nondet`, because a procedure that writes nothing can still be unreplayable if it branches on the
+clock. It also duplicates #5's discount logic by copy-paste, which is what its specification
+surfaces and what makes it the natural second migration.
 
 Each procedure must be **genuinely gnarly**: 80–300 lines of T-SQL, nested `IF` blocks, temp tables, cursors in one or two, magic numbers, commented-out blocks, at least one comment in Czech saying something like `-- docasne, opravit pozdeji` dated 2014. It has to look like real legacy or the whole demo reads as a toy.
 

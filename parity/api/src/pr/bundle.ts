@@ -155,6 +155,17 @@ export async function commitPr(db: Db, config: Config, procedureName: string): P
     .orderBy(desc(pullRequests.id))
     .limit(1);
   if (row === undefined) return null;
+  return openRow(db, config, row);
+}
+
+/**
+ * Push one assembled row, whatever it is a PR for.
+ *
+ * Split out at M7 because the deletion PR belongs to three procedures rather than to one, so it
+ * cannot be found by procedure — but it is opened by exactly the same act, with exactly the same
+ * rule in front of it: something with a person behind it asked.
+ */
+export async function openRow(db: Db, config: Config, row: PullRequest): Promise<PullRequest | null> {
   if (row.status === 'open' && row.url !== null) return row;
 
   try {

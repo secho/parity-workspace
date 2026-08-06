@@ -10,33 +10,45 @@ import { openStore, waitForPostgres } from '../db/client.js';
 import { applyMigrations } from '../db/migrate.js';
 import { loadConfig, prReadiness } from '../env.js';
 import { assemblePr, commitPr } from '../pr/bundle.js';
+import { assembleDeletionPr, commitDeletionPr } from '../pr/deletion.js';
 
 const config = loadConfig();
 const procedureName = process.argv[2] ?? 'sp_CalculateOrderTotal';
 const commit = process.argv.includes('--commit');
 
+// `make open-pr PROC=deletion` is the deletion campaign's PR — one change over three procedures,
+// so it is named by what it does rather than by which procedure it belongs to.
+const deletion = procedureName === 'deletion';
+
 const store = openStore(config.pgUrl);
 await waitForPostgres(store.pool);
 await applyMigrations(store.db);
 
-const assembled = await assemblePr(store.db, config, {
-  procedureName,
-  summaryCs:
-    'Výpočet ceny objednávky se přesouvá ze stored procedury do samostatné služby. ' +
-    'Chování zůstává identické — včetně toho, které je podle specifikace sporné.',
-  fixCandidatesCs: '',
-});
+const assembled = deletion
+  ? await assembleDeletionPr(store.db, config)
+  : await assemblePr(store.db, config, {
+      procedureName,
+      summaryCs:
+        'Výpočet ceny objednávky se přesouvá ze stored procedury do samostatné služby. ' +
+        'Chování zůstává identické — včetně toho, které je podle specifikace sporné.',
+      fixCandidatesCs: '',
+    });
 
 if (assembled === null) {
-  console.error(`nothing to assemble for ${procedureName} — no complete generated service`);
+  console.error(
+    deletion
+      ? 'nothing to assemble — no procedure is marked `deleted`. Run the `Smazat mrtvé procedury` campaign first.'
+      : `nothing to assemble for ${procedureName} — no complete generated service`,
+  );
   await store.pool.end();
   process.exit(1);
 }
 
-console.log(`assembled PR for ${procedureName}`);
+console.log(`assembled ${assembled.kind} PR for ${deletion ? 'the dead procedures' : procedureName}`);
 console.log(`  ${assembled.owner}/${assembled.repo}  ${assembled.branch} → ${assembled.baseBranch}`);
-console.log(`  ${(assembled.files as { path: string }[]).length} files:`);
-for (const file of assembled.files as { path: string }[]) console.log(`    ${file.path}`);
+const files = assembled.files as { path: string; contents: string | null }[];
+console.log(`  ${files.length} files:`);
+for (const file of files) console.log(`    ${file.contents === null ? 'delete ' : '       '}${file.path}`);
 console.log(`  artefact ${assembled.artifactHash.slice(0, 12)}, ${assembled.body.length} characters of body`);
 
 const readiness = prReadiness(config);
@@ -55,7 +67,7 @@ if (!readiness.ready) {
   process.exit(1);
 }
 
-const opened = await commitPr(store.db, config, procedureName);
+const opened = deletion ? await commitDeletionPr(store.db, config) : await commitPr(store.db, config, procedureName);
 if (opened?.status !== 'open') {
   console.error(`\nfailed to open: ${opened?.error ?? 'unknown error'}`);
   await store.pool.end();

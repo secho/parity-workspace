@@ -62,6 +62,40 @@ export function allowedPathsFor(procedureName: string): readonly string[] {
   return PATHS[procedureName] ?? ALLOWED_PATHS;
 }
 
+/**
+ * Whether `write_service_file` may write this, and if not, what to tell the agent.
+ *
+ * Lifted out of the tool handler so that a gate can exercise the real decision without a live
+ * model run — the same move `probe-oracle` makes when it corrupts a stored expectation. Both
+ * refusals are here rather than one here and one in the tool, because a rule that is checked in
+ * two places is a rule that gets changed in one of them.
+ *
+ * Returns null when the write is allowed.
+ */
+export function serviceFileRefusal(procedureName: string, path: string, contents: string): string | null {
+  const allowed = allowedPathsFor(procedureName);
+  if (!allowed.includes(path)) {
+    return (
+      `Refused: ${path} is not part of ${procedureName}'s service. Write ${allowed.join(' and ')} — ` +
+      "index.ts and db.ts are the migration harness's contract and belong to the platform."
+    );
+  }
+
+  // Imports are checked here too. The container installs its dependencies at build time, so a
+  // service that reaches for a package nobody installed does not fail at review — it fails four
+  // hundred replay cases into a shadow run, as a connection refused.
+  const imported = [...contents.matchAll(/^\s*import\s[^;]*?from\s+['"]([^'"]+)['"]/gm)].map((m) => m[1]);
+  const foreign = imported.filter((s) => !s.startsWith('.') && !s.startsWith('node:') && s !== 'fastify' && s !== 'mssql');
+  if (foreign.length > 0) {
+    return (
+      `Refused: ${path} imports ${foreign.join(', ')}. The service container installs only fastify and mssql at ` +
+      'build time, so nothing else can resolve at runtime. Rewrite using those two and the Node standard library.'
+    );
+  }
+
+  return null;
+}
+
 export interface ArtifactFile {
   path: string;
   contents: string;

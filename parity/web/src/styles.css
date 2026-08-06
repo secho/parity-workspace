@@ -112,9 +112,6 @@ a {
   color: var(--text-faint);
 }
 
-.nav a.later-m7::after {
-  content: "M7";
-}
 
 /* --- decision queue ----------------------------------------------------------- */
 
@@ -343,8 +340,21 @@ a {
 }
 
 .badge-mode {
-  color: var(--warn);
   text-transform: uppercase;
+  border: 1px solid transparent;
+  padding: 0 4px;
+}
+
+/* Live is quiet and replay shouts. Both are always on screen: the failure this exists to
+   catch is a beat running in the mode it was not supposed to, and that is two mistakes,
+   not one. */
+.badge-mode.live {
+  color: var(--text-faint);
+}
+
+.badge-mode.replay {
+  color: var(--warn);
+  border-color: var(--warn);
 }
 
 .notice {
@@ -692,4 +702,53 @@ pre.source {
   .two-col {
     grid-template-columns: 1fr;
   }
+}
+
+/* --- campaigns ---------------------------------------------------------------- */
+
+.campaign-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+  margin: 16px 0 24px;
+}
+
+.campaign-card {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.campaign-card h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.campaign-card p {
+  margin: 0;
+  flex: 1;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.campaign-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 6px;
+}
+
+.campaign-actions select {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--text-dim);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  padding: 4px 6px;
 }

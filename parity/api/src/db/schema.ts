@@ -1,5 +1,6 @@
 import { relations } from 'drizzle-orm';
 import {
+  type AnyPgColumn,
   bigint,
   boolean,
   index,
@@ -155,6 +156,17 @@ export const agentRuns = pgTable(
     inputTokens: integer('input_tokens'),
     outputTokens: integer('output_tokens'),
     durationMs: integer('duration_ms'),
+
+    /**
+     * The recorded run this one replayed, or null for a run that actually called a model.
+     *
+     * A replayed run is a real row — the steps are re-materialised as they are emitted, because
+     * the UI treats an SSE event as a signal to refetch and reads the payload from the table —
+     * but it spent nothing, so `cost_usd` and the token counts stay NULL. This column is the
+     * difference between "the model produced this" and "this is a recording of the model
+     * producing it", and `verify-m7` reads it back rather than trusting the mode flag.
+     */
+    replayedFrom: integer('replayed_from').references((): AnyPgColumn => agentRuns.id, { onDelete: 'set null' }),
 
     startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
     finishedAt: timestamp('finished_at', { withTimezone: true }),
@@ -431,6 +443,15 @@ export const shadowRuns = pgTable(
     replayMs: integer('replay_ms'),
     durationMs: integer('duration_ms'),
     error: text('error'),
+    /**
+     * The recorded shadow run this one re-materialised, or null for a run that actually opened
+     * a connection to the shadow copy and replayed cases against it.
+     *
+     * Same claim as `agent_runs.replayed_from`, and it matters more here: a replayed shadow run
+     * touches no database at all, so a row that did not say so would be indistinguishable from
+     * one that had genuinely replayed four hundred calls.
+     */
+    replayedFrom: integer('replayed_from').references((): AnyPgColumn => shadowRuns.id, { onDelete: 'set null' }),
     startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
     finishedAt: timestamp('finished_at', { withTimezone: true }),
   },
@@ -608,9 +629,24 @@ export const pullRequests = pgTable(
   'pull_requests',
   {
     id: serial('id').primaryKey(),
-    procedureId: integer('procedure_id')
-      .notNull()
-      .references(() => procedures.id, { onDelete: 'cascade' }),
+    /**
+     * NULLABLE from M7, and that is a change with a consequence.
+     *
+     * The deletion PR removes three procedures at once, so it belongs to no single one of them
+     * — `procedure_id` is NULL and the row therefore no longer cascades when `procedures` is
+     * truncated. `resetState()` names `pull_requests` explicitly for exactly this reason;
+     * without that, `make demo-reset` would leave yesterday's deletion PR on screen.
+     */
+    procedureId: integer('procedure_id').references(() => procedures.id, { onDelete: 'cascade' }),
+    /**
+     * migration | deletion — what this PR does, not which procedure it does it to.
+     *
+     * A migration PR adds a service and its evidence for one procedure. A deletion PR removes
+     * dead procedures from the estate's own source tree, carries no service, and cites zero
+     * invocations as its whole argument. Same table because they are the same act with the same
+     * gate in front of them; a column because the body, the branch and the file set differ.
+     */
+    kind: text('kind').notNull().default('migration'),
     /** assembled | open | failed */
     status: text('status').notNull().default('assembled'),
     owner: text('owner').notNull(),
@@ -631,6 +667,54 @@ export const pullRequests = pgTable(
     openedAt: timestamp('opened_at', { withTimezone: true }),
   },
   (t) => [unique('uq_pull_request_artifact').on(t.procedureId, t.artifactHash), index('ix_pull_requests_proc').on(t.procedureId)],
+);
+
+/**
+ * One run of one campaign — a sweep over many procedures, started from the Kampaně screen.
+ *
+ * ONE table with an `items` array, not `campaigns` + `campaign_items`. There are exactly three
+ * campaigns and their definitions are code (`../campaign/definitions.ts`), so a `campaigns`
+ * table would be a table with three hardcoded rows in it — configuration pretending to be data.
+ *
+ * Item state, on the other hand, is genuinely not derivable and so is genuinely stored. The
+ * deletion campaign produces no agent runs at all, so "which items are done" cannot be
+ * reconstructed from `agent_runs` the way `blocker` is reconstructed from `oracle_state`. That
+ * is the test the derived-not-stored rule actually applies: store what nothing else records,
+ * derive everything else.
+ *
+ * `campaign_runs` has no foreign key to `procedures`, which means it does NOT cascade when the
+ * estate is truncated — `resetState()` names it, and `SNAPSHOT_TABLES` carries it, or beat 1
+ * would open on yesterday's campaign.
+ */
+export const campaignRuns = pgTable(
+  'campaign_runs',
+  {
+    id: serial('id').primaryKey(),
+    /** map-estate | migrate-procedure | delete-dead — the definition's key, not a label. */
+    campaign: text('campaign').notNull(),
+    /** running | succeeded | failed */
+    status: text('status').notNull().default('running'),
+    /** What the campaign was pointed at, when it takes an argument. */
+    target: text('target'),
+    /** [{ key, label, status, detail, skipped }] — one entry per unit of work, in order. */
+    items: jsonb('items').notNull(),
+    total: integer('total').notNull().default(0),
+    done: integer('done').notNull().default(0),
+    /**
+     * Items that were already finished before the campaign started.
+     *
+     * Counted separately rather than folded into `done`, because the difference is the honest
+     * answer to beat 2's timing problem: on an already-mapped estate the same button completes
+     * in seconds and says so, instead of quietly implying it re-ran twenty-eight model calls.
+     */
+    skipped: integer('skipped').notNull().default(0),
+    failed: integer('failed').notNull().default(0),
+    costUsd: numeric('cost_usd', { precision: 12, scale: 6 }),
+    error: text('error'),
+    startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp('finished_at', { withTimezone: true }),
+  },
+  (t) => [index('ix_campaign_runs_campaign').on(t.campaign)],
 );
 
 export const proceduresRelations = relations(procedures, ({ many }) => ({
@@ -661,3 +745,4 @@ export type Diff = typeof diffs.$inferSelect;
 export type Decision = typeof decisions.$inferSelect;
 export type ServiceArtifact = typeof serviceArtifacts.$inferSelect;
 export type PullRequest = typeof pullRequests.$inferSelect;
+export type CampaignRun = typeof campaignRuns.$inferSelect;

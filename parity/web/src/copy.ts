@@ -92,6 +92,13 @@ export const cs = {
     directTooltip: 'Přímo na Anthropic API. Nastavením PARITY_LLM_BASE_URL se provoz přesměruje na gateway.',
     noRunYet: 'zatím žádný běh',
     notConfigured: 'chybí API klíč',
+    // Vždycky viditelné, obojí. Puštět beat naživo v replay módu (nebo naopak) je nejpravděpodobnější
+    // způsob, jak si demo rozbít — a dokud se ukazoval jenom replay, nešlo to poznat dřív než podle
+    // toho, že běh trval podezřele přesně stejně jako minule.
+    modeLive: 'live',
+    modeReplay: 'replay',
+    modeReplayTooltip: 'Běhy se přehrávají z nahrávky. Nic se nevolá na modelu a nic se neplatí.',
+    modeLiveTooltip: 'Ostrý provoz — každý běh jde na model a stojí peníze.',
   },
 
   ops: {
@@ -109,8 +116,16 @@ export const cs = {
       'Vzniká z PostToolUse hooku — nic se neinstrumentuje ručně, takže na nic nejde zapomenout. Tokeny a cena jsou na běhu, ne na volání: SDK je hlásí jednou za běh.',
     auditColumns: { when: 'Kdy', run: 'Běh', tool: 'Nástroj', outcome: 'Výsledek', duration: 'Trvání', detail: 'Detail' },
     auditEmpty: 'Zatím žádné volání nástroje. Audit log se naplní prvním během agenta.',
-    outcomeAllowed: 'povoleno',
-    outcomeBlocked: 'zablokováno',
+    // Čtyři výsledky, ne dva. `denied` a `failed` se dřív vykreslovaly jako zelené „povoleno“ —
+    // tedy přesně naopak, než co se stalo. Dvě odmítnutí mají různý důvod a musí být rozeznatelná:
+    // `blocked` odmítl PreToolUse hook podle policy tabulky, `denied` odmítlo SDK, protože nástroj
+    // nebyl v allowedTools pro tenhle běh. `failed` je jediný z těch čtyř, kde volání proběhlo.
+    outcomes: {
+      allowed: { label: 'povoleno', tone: 'good' },
+      blocked: { label: 'zablokováno policy', tone: 'bad' },
+      denied: { label: 'nepovolený nástroj', tone: 'bad' },
+      failed: { label: 'selhalo', tone: 'warn' },
+    } as Record<string, { label: string; tone: string }>,
     agentBlocked: (code: string | null): string => {
       switch (code) {
         case 'placeholder_key':
@@ -123,6 +138,40 @@ export const cs = {
           return 'Agent neběží: v .env chybí API klíč.';
       }
     },
+  },
+
+  campaigns: {
+    title: 'Kampaně',
+    subtitle: 'Hromadná práce nad estate. Jedna kampaň naráz.',
+    start: 'Spustit',
+    running: 'běží…',
+    needsTarget: 'Vyber proceduru',
+    lastRun: 'Poslední běh',
+    history: 'Historie',
+    empty: 'Zatím neproběhla žádná kampaň.',
+    progress: (done: number, total: number) => `${done}/${total} hotovo`,
+    // Přeskočené se počítají zvlášť, a to je ten podstatný rozdíl: kampaň, která nic neudělala,
+    // protože všechno už bylo hotové, není totéž co kampaň, která odvedla práci.
+    skipped: (n: number) => `${n} přeskočeno`,
+    failed: (n: number) => `${n} selhalo`,
+    cost: 'cena',
+    duration: 'trvání',
+    concurrent: 'Jiná kampaň už běží.',
+    agentBlocked: 'Kampaně, které volají model, nejde spustit — chybí API klíč.',
+    columns: { item: 'Položka', status: 'Stav', detail: 'Výsledek', duration: 'Trvání' },
+    historyColumns: { campaign: 'Kampaň', status: 'Stav', items: 'Položek', cost: 'Cena' },
+    itemStatus: {
+      pending: 'čeká',
+      running: 'běží',
+      done: 'hotovo',
+      skipped: 'přeskočeno',
+      failed: 'selhalo',
+    } as Record<string, string>,
+    runStatus: {
+      running: 'běží',
+      succeeded: 'dokončeno',
+      failed: 'selhalo',
+    } as Record<string, string>,
   },
 
   spec: {

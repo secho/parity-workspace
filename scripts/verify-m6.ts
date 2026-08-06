@@ -560,16 +560,21 @@ async function main(): Promise<void> {
     // --- 10 · Reset and determinism -------------------------------------------
     section('10 · Reset and determinism');
 
+    // Scoped to PRs that belong to a procedure. From M7 not all of them do: the deletion PR
+    // removes three procedures at once, carries a NULL `procedure_id`, and therefore does NOT
+    // cascade — `resetState()` names `pull_requests` explicitly for exactly that reason, and
+    // `verify-m7` §8 is where that half is checked. Counting all rows here would have asserted
+    // something that stopped being true and would have been right to fail.
     await client.query('BEGIN');
     const artefactsBefore = await client.query(`SELECT COUNT(*)::int AS n FROM service_artifacts`);
-    const prsBefore = await client.query(`SELECT COUNT(*)::int AS n FROM pull_requests`);
+    const prsBefore = await client.query(`SELECT COUNT(*)::int AS n FROM pull_requests WHERE procedure_id IS NOT NULL`);
     await client.query(`DELETE FROM procedures`);
     const artefactsAfter = await client.query(`SELECT COUNT(*)::int AS n FROM service_artifacts`);
-    const prsAfter = await client.query(`SELECT COUNT(*)::int AS n FROM pull_requests`);
+    const prsAfter = await client.query(`SELECT COUNT(*)::int AS n FROM pull_requests WHERE procedure_id IS NOT NULL`);
     await client.query('ROLLBACK');
 
     check(artefactsBefore.rows[0].n > 0 && artefactsAfter.rows[0].n === 0, 'service_artifacts cascades from procedures');
-    check(prsBefore.rows[0].n > 0 && prsAfter.rows[0].n === 0, 'pull_requests cascades too');
+    check(prsBefore.rows[0].n > 0 && prsAfter.rows[0].n === 0, 'a migration PR cascades too');
     const stillThere = await client.query(`SELECT COUNT(*)::int AS n FROM procedures`);
     check(stillThere.rows[0].n === 14, 'and the rollback held', `${stillThere.rows[0].n}`);
     note('so `make demo-reset` takes the generated service and the PR record with it');

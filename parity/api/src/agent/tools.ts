@@ -8,7 +8,7 @@ import { connect, readCatalog } from '../ingest/mssql.js';
 import { invariantSpec, unknownIdentifiers, type InvariantSpec } from '../oracle/invariants.js';
 import { runShadow } from '../shadow/run.js';
 import { outcomeSignature } from '../capture/signature.js';
-import { allowedPathsFor, nextAttempt, recordArtifact } from '../service/artifacts.js';
+import { nextAttempt, recordArtifact, serviceFileRefusal } from '../service/artifacts.js';
 import { assemblePr } from '../pr/bundle.js';
 
 /**
@@ -829,24 +829,12 @@ export function parityTools(context: ToolContext) {
       const [row] = await context.db.select().from(procedures).where(eq(procedures.name, context.procedureName));
       if (row === undefined) return text(`No procedure named ${context.procedureName}.`);
 
-      const allowed = allowedPathsFor(context.procedureName);
-      if (!allowed.includes(path)) {
-        return text(
-          `Refused: ${path} is not part of ${context.procedureName}'s service. Write ${allowed.join(' and ')} — ` +
-            'index.ts and db.ts are the migration harness\'s contract and belong to the platform.',
-        );
-      }
-
-      // Imports are checked here too. The container installs its dependencies at build time,
-      // so a service that reaches for a package nobody installed does not fail at review — it
-      // fails four hundred replay cases into a shadow run, as a connection refused.
-      const imported = [...contents.matchAll(/^\s*import\s[^;]*?from\s+['"]([^'"]+)['"]/gm)].map((m) => m[1]);
-      const foreign = imported.filter((s) => !s.startsWith('.') && !s.startsWith('node:') && s !== 'fastify' && s !== 'mssql');
-      if (foreign.length > 0) {
-        return text(
-          `Refused: ${path} imports ${foreign.join(', ')}. The service container installs only fastify and mssql at build time, so nothing else can resolve at runtime. Rewrite using those two and the Node standard library.`,
-        );
-      }
+      // Both refusals live in `service/artifacts.ts` so that a gate can exercise the real
+      // decision without a live model run. This is the whole enforcement — the schema takes a
+      // plain string, because which paths are allowed depends on the run's procedure and a
+      // schema cannot see that.
+      const refusal = serviceFileRefusal(context.procedureName, path, contents);
+      if (refusal !== null) return text(refusal);
 
       const attempt = context.serviceAttempt ?? (await nextAttempt(context.db, row.id));
       const stored = await recordArtifact(context.db, {

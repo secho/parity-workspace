@@ -3,9 +3,14 @@ import { cs } from '../copy';
 import { fetchRuntime, type Runtime } from '../lib/api';
 
 /**
- * Provider and model actually in use — read from the last successful run's init message,
+ * Provider, model and MODE actually in use — read from the last successful run's init message,
  * not from configuration. A badge that showed what was configured would keep saying the
  * right thing after the routing broke, which is the one situation it exists for.
+ *
+ * The mode is always shown, including when it is `live`. It used to appear only when it was not,
+ * which meant the single most likely on-stage failure — running a beat in the wrong mode — was
+ * invisible in exactly one of its two directions: a replayed beat announced itself, and a beat
+ * that was supposed to be replayed and quietly went live did not.
  */
 export function ModelBadge(): JSX.Element | null {
   const [runtime, setRuntime] = useState<Runtime | null>(null);
@@ -29,7 +34,12 @@ export function ModelBadge(): JSX.Element | null {
       ) : (
         <span className="badge-model">{runtime.lastModelUsed}</span>
       )}
-      {runtime.mode !== 'live' && <span className="badge-mode">{runtime.mode}</span>}
+      <span
+        className={`badge-mode ${runtime.mode === 'live' ? 'live' : 'replay'}`}
+        title={runtime.mode === 'live' ? cs.runtime.modeLiveTooltip : cs.runtime.modeReplayTooltip}
+      >
+        {runtime.mode === 'live' ? cs.runtime.modeLive : runtime.mode}
+      </span>
     </div>
   );
 }

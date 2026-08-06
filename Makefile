@@ -189,6 +189,10 @@ github-token:
 
 # Assemble the PR. Opening it needs --commit, which the gate never passes: a pull request on a
 # public repository is the one act here that demo-reset cannot take back.
+#
+# PROC=deletion assembles the deletion campaign's PR instead — one change over three procedures,
+# so it is named by what it does rather than by which procedure it belongs to. Its files carry
+# `contents: null`, which becomes a tree entry with `sha: null`: three removals, nothing added.
 open-pr:
 	docker compose exec -T parity-api npx tsx src/cli/open-pr.ts $(PROC) $(COMMIT)
 
@@ -232,5 +236,9 @@ reset-procedure:
 	   echo "  kept the generated service source"; \
 	 fi
 
+# M7 acceptance. Spends nothing: every probe here is model-free, the reset and the
+# per-procedure reset are exercised inside transactions that are rolled back, and the gate
+# asserts the estate's total spend did not move while it ran.
 verify-m7:
-	@echo "TODO M7 acceptance"; exit 1
+	npm --prefix scripts install --silent
+	npm --prefix scripts run verify-m7

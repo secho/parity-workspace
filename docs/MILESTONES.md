@@ -206,15 +206,73 @@ demo-reset → map-estate → verify-m3 → generate-oracles → verify-m4
   → implement-service → adopt-service → shadow-run IMPL=generated → verify-m6
 ```
 
-## M7 — Campaigns, reset, replay
-- [ ] Campaign runner + `Zmapovat estate` and `Smazat mrtvé procedury`
-- [ ] Deletion campaign opens a PR removing the 3 dead procedures
-- [ ] `Provoz` page: skills, policy tiers, audit log
-- [ ] `make demo-reset` returns everything to pristine in under 2 minutes, including remote branches and PRs
-- [ ] Every agent and shadow run recorded; `PARITY_MODE=replay` serves them with original timings
-- [ ] A recorded golden run committed to the repo
+## M7 — Campaigns, reset, replay — **done**, `make verify-m7` 70/70
 
-`make verify-m7` — asserts reset completes under 120 s and leaves zero Parity state, replay mode produces identical output to the recorded live run.
+The milestone that turns the lane from *done once* into *demonstrable*. Jan's ask, in his words:
+start a process that runs triage, spec, oracle, shadow run and decisions **on another procedure**,
+live, in the room — including showing how the service is made — without resetting all of Parity
+each time.
+
+- [x] Campaign runner + `Zmapovat estate`, `Migrovat proceduru` and `Smazat mrtvé procedury` —
+      three definitions **in code**, one `campaign_runs` row per run with the item states it is
+      the only record of. Fire-and-forget: the POST returns the row in **6 ms** and the screen
+      polls, because `Zmapovat estate` is ten minutes and Vite's proxy kills a request long
+      before that. A second start is refused 409
+- [x] **Campaigns skip what is already done.** Ten lines that do three things: make a campaign
+      safe to re-run in rehearsal, idempotent for the gate, and honest on stage — a full mapping
+      is 28 model runs and $7.12, which does not fit in a two-minute beat and never will. On a
+      mapped estate the same button reports **14 přeskočeno in 266 ms** and spends nothing
+- [x] Deletion campaign assembles a PR removing the 3 dead procedures — three tree entries with
+      `sha: null`, no additions, `procedure_id` NULL because it belongs to no single procedure.
+      **Assembled, not opened**: the tier table refuses `open_pr` to every task class, so
+      `make open-pr PROC=deletion --commit` is the human act
+- [x] `Provoz` page: skills, policy tiers, audit log — and the audit log now renders **four**
+      outcomes rather than two. `denied` and `failed` had been drawing a green *povoleno* chip,
+      which is the opposite of what happened, on 54 of 521 rows
+- [x] **A second procedure through the whole lane.** `sp_GetCartSummary`: service written by the
+      agent ($1.39), 11/11 golden against it, 279 captured calls replayed over 18 of 18 strata,
+      zero differences. Two result sets and an empty write set **on both sides, measured** from
+      Change Tracking rather than asserted
+- [x] Every agent and shadow run recorded; `PARITY_MODE=replay` serves them at the original
+      cadence, scaled by `PARITY_REPLAY_SPEED`. Measured at speed 10: **30.2 s against a
+      recorded 30.1 s**, nine of nine steps identical in order, `cost_usd` NULL, the estate's
+      total spend unmoved, and both database fingerprints exactly where they were
+- [x] `make reset-procedure PROC=x [KEEP_SERVICE=1]` — one procedure back to nothing analysed in
+      **105 ms**, with every one of the other procedure's row counts identical across all
+      fourteen artefact tables
+- [x] A recorded golden run committed to the repo — `scripts/golden-run.sql.gz`, **14 897 rows
+      across 20 tables, 3.1 MB gzipped**, with `make record-golden` / `replay-check` /
+      `restore-golden` as one mechanism
+
+**Two things came out differently from the plan, and both are better.**
+
+`sp_GetCartSummary` earned `proven` on its first green run — and should not have. It has no
+hand-written reference implementation, so the condition "every difference the reference run found
+has been decided" quantified over an empty set and passed **vacuously**. `promoteAfterShadow` now
+also requires a succeeded `reference` run, and the procedure sits at `shadow` with the blocker
+`čeká na rozhodnutí`. That is the better demo: a rung the machine declines to climb on its own.
+
+**`make demo-reset` still does not close the PR or delete its remote branch**, and that is now
+deliberate rather than deferred. Everything else the reset touches is inside Postgres and comes
+back from the snapshot in two seconds; a remote branch is outside it. The `pull_requests` row
+stores the branch and the number so it remains possible — it is one `gh` call away — but it is
+the one act in this platform that reaches outward, and reset is the wrong place for it.
+
+`make verify-m7` — 70 checks in nine sections. It **spends nothing**: the reset and the
+per-procedure reset are exercised by running the real code inside transactions that are rolled
+back, campaigns by running the one campaign that makes no model call, replay by replaying — and
+the gate asserts the estate's total spend did not move and that both replays were removed again,
+so it leaves the database exactly as it found it.
+
+```
+verify-m6 → implement-service PROC=sp_GetCartSummary → adopt-service PROC=sp_GetCartSummary
+  → service-suite PROC=sp_GetCartSummary TARGET=service
+  → shadow-run PROC=sp_GetCartSummary "" generated → record-golden → verify-m7
+```
+
+The 120-second full reset is measured by hand rather than by the gate: `make demo-reset &&
+make restore-golden`, which is a reset plus a 3.1 MB restore. Putting it inside the gate would
+mean every acceptance run destroyed and rebuilt $16 of live analysis.
 
 ## M8 — Rehearsal
 - [ ] `docs/DEMO-SCRIPT.md` runs start to finish, three times consecutively, from `make demo-reset`, with no intervention

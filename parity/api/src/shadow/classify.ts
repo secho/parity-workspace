@@ -4,6 +4,7 @@ import { diffs, shadowCases, shadowRuns } from '../db/schema.js';
 import type { Config } from '../env.js';
 import { classifyDiffRun, executeRun } from '../agent/runner.js';
 import { stableKey } from '../oracle/canonicalise.js';
+import { replayedVerdicts } from '../replay/serve.js';
 import type { Finding } from './diff.js';
 import type { ShadowResult } from './run.js';
 
@@ -106,6 +107,25 @@ export async function classifyRun(
   let costUsd = 0;
   let runs = 0;
   const verdicts: Verdict[] = [];
+
+  // In replay mode the verdicts arrived with the copied rows — reason, Czech explanation and
+  // all. Asking the model again would be the one place a "replayed" run quietly spent money,
+  // and it would be free to answer differently, which is what hard rule 5 forbids.
+  if (config.mode === 'replay') {
+    const recorded = await replayedVerdicts(db, run.shadowRunId);
+    const change = recorded.filter((v) => v.verdict === 'behaviour_change').length;
+    say(`${recorded.length} findings, verdicts replayed — no model run`);
+    await db.update(shadowRuns).set({ behaviourDiffs: change }).where(eq(shadowRuns.id, run.shadowRunId));
+    return {
+      findings: run.findings,
+      runs: 0,
+      noise: recorded.filter((v) => v.verdict === 'noise').length,
+      behaviourChange: change,
+      unclassified: recorded.filter((v) => v.verdict === null).length,
+      verdicts: recorded.map((v) => ({ ...v, verdict: v.verdict as Verdict['verdict'] })),
+      costUsd: 0,
+    };
+  }
 
   for (const finding of run.findings) {
     const evidence = await evidenceFor(db, run.shadowRunId, finding);

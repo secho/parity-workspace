@@ -1,22 +1,6 @@
 import { sql as raw } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
-import {
-  agentRuns,
-  couplingEdges,
-  decisions,
-  diffs,
-  goldenResults,
-  goldenTests,
-  invariantResults,
-  invariants,
-  oracleRuns,
-  procedureCalls,
-  procedureColumns,
-  procedures,
-  shadowCases,
-  shadowRuns,
-  specs,
-} from '../db/schema.js';
+import { couplingEdges, procedureCalls, procedureColumns, procedures, specs } from '../db/schema.js';
 import type { Config } from '../env.js';
 import { couplingEdges as buildEdges, writeOwners, type WriterEntry } from './coupling.js';
 import { connect, readCatalog, readInvocationStats, readProcedures } from './mssql.js';
@@ -166,19 +150,54 @@ export async function ingest(db: Db, config: Config): Promise<IngestSummary> {
 }
 
 /**
+ * What `make demo-reset` empties, by name.
+ *
+ * `procedures` cascades to specs, agent_runs, agent_steps and audit_entries. policy_rules is
+ * configuration rather than state — reasserted on boot by `seedPolicy` — so it is left alone,
+ * and it is the only table here that is.
+ *
+ * The oracle and shadow tables are named rather than left to CASCADE: beat 1 opens on coverage
+ * zero, coverage is a function of oracle_state, and oracle_state only moves because these rows
+ * exist. A reset that quietly left them behind would open the demo on the wrong screen — with a
+ * decision queue still holding yesterday's findings.
+ *
+ * `campaign_runs` and `pull_requests` are named for a sharper reason: from M7 neither is
+ * reachable by CASCADE. `campaign_runs` has no foreign key at all, and a deletion PR carries a
+ * NULL `procedure_id`, so both survive the truncation of `procedures` — beat 1 would open with
+ * yesterday's campaign on screen and a deletion PR still assembled.
+ *
+ * A constant rather than an inline statement because two other things have to agree with it:
+ * `SNAPSHOT_TABLES` in `scripts/golden.ts`, which is what a reset can be undone from, and
+ * `src/cli/probe-reset.ts`, which truncates inside a transaction it rolls back so that
+ * `verify-m7` can check the agreement empirically rather than by reading two files.
+ */
+export const RESET_TABLES = [
+  'coupling_edges',
+  'procedure_calls',
+  'procedure_columns',
+  'golden_results',
+  'invariant_results',
+  'oracle_runs',
+  'golden_tests',
+  'invariants',
+  'decisions',
+  'diffs',
+  'shadow_cases',
+  'shadow_runs',
+  'campaign_runs',
+  'pull_requests',
+  'agent_runs',
+  'specs',
+  'procedures',
+] as const;
+
+export const RESET_STATEMENT = `TRUNCATE TABLE ${RESET_TABLES.join(', ')} RESTART IDENTITY CASCADE`;
+
+/**
  * Back to "nothing analysed yet". Analysis and estate facts both go; the caller re-ingests,
  * because beat 1 of the demo opens on fourteen procedures with coverage near zero, not on
  * an empty screen.
  */
 export async function resetState(db: Db): Promise<void> {
-  // procedures cascades to specs, agent_runs, agent_steps and audit_entries. policy_rules
-  // is configuration rather than state and is reasserted on boot, so it is left alone.
-  //
-  // The oracle and shadow tables are named rather than left to CASCADE: beat 1 opens on
-  // coverage zero, and coverage is a function of oracle_state, which only moves because these
-  // rows exist. A demo-reset that quietly left them behind would open the demo on the wrong
-  // screen — with a decision queue still holding yesterday's findings.
-  await db.execute(
-    raw`TRUNCATE TABLE ${couplingEdges}, ${procedureCalls}, ${procedureColumns}, ${goldenResults}, ${invariantResults}, ${oracleRuns}, ${goldenTests}, ${invariants}, ${decisions}, ${diffs}, ${shadowCases}, ${shadowRuns}, ${agentRuns}, ${specs}, ${procedures} RESTART IDENTITY CASCADE`,
-  );
+  await db.execute(raw.raw(RESET_STATEMENT));
 }

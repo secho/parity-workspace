@@ -17,7 +17,9 @@ export function Sidebar(): JSX.Element {
         <NavLink to="/" className={({ isActive }) => (isActive ? 'active' : '')}>
           {cs.nav.estate}
         </NavLink>
-        <a className="disabled later-m7">{cs.nav.campaigns}</a>
+        <NavLink to="/kampane" className={({ isActive }) => (isActive ? 'active' : '')}>
+          {cs.nav.campaigns}
+        </NavLink>
         <NavLink to="/fronta" className={({ isActive }) => (isActive ? 'active' : '')}>
           {cs.nav.queue}
         </NavLink>
