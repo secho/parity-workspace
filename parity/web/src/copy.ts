@@ -129,6 +129,38 @@ export const cs = {
     generatedAt: (when: string) => `vygenerováno ${when}`,
   },
 
+  oracle: {
+    title: 'Oracle',
+    empty: 'Oracle zatím není. Vzniká skillem generate-oracle.',
+    goldenTitle: 'Golden testy',
+    invariantsTitle: 'Invarianty',
+    // The distinction the whole tab exists to make: a case is a recorded call, an invariant
+    // is a rule. One says "it still does what it did", the other says "what it does is right".
+    goldenHint: 'Každý případ je skutečné zachycené volání. Vstupy se neberou od modelu, ale z capture.',
+    invariantsHint: 'Pravidla se vyhodnocují v kódu nad tím, co golden testy zapsaly.',
+    branch: 'Větev',
+    covers: 'Pokrývá',
+    source: 'Volání',
+    normalised: 'Normalizováno',
+    checks: 'kontrol',
+    violations: 'porušení',
+    advisory: 'neověřováno',
+    advisoryHint: 'Pravidlo, které nejde vyhodnotit v kódu. Je zapsané, ale nepočítá se jako ověřené.',
+    notEvaluated: 'nevyhodnoceno',
+    notEvaluatedHint:
+      'Pravidlo se vyhodnocuje nad tím, co procedura zapsala. Tahle nic nezapisuje, takže není co kontrolovat — pravidlo tu je, ale zatím nic netvrdí.',
+    unconfirmed: 'nepotvrzeno',
+    unconfirmedHint:
+      'Pravidlo neplatí skoro nikde — to znamená, že popisuje něco jiného než tuhle proceduru, ne že je procedura rozbitá. Zůstává tu jako stopa, ale nepočítá se mezi nálezy.',
+    pass: 'prošel',
+    fail: 'neprošel',
+    notRun: 'nespuštěno',
+    passRate: (passed: number, total: number) => `${passed}/${total} prošlo`,
+    // A violated invariant is a finding about the estate, not a broken oracle. The copy has
+    // to say that plainly or the screen reads as "our tooling is failing".
+    violationHint: 'Procedura porušuje pravidlo, které sama deklaruje. To není chyba oracle — to je nález.',
+  },
+
   steps: {
     title: 'Kroky agenta',
     empty: 'Zatím žádný běh agenta nad touhle procedurou.',

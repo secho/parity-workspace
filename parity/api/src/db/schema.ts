@@ -1,5 +1,17 @@
 import { relations } from 'drizzle-orm';
-import { boolean, index, integer, numeric, pgTable, serial, text, timestamp, unique } from 'drizzle-orm/pg-core';
+import {
+  bigint,
+  boolean,
+  index,
+  integer,
+  jsonb,
+  numeric,
+  pgTable,
+  serial,
+  text,
+  timestamp,
+  unique,
+} from 'drizzle-orm/pg-core';
 
 /**
  * Parity's own state. Deliberately not the demo app's database — Parity must look
@@ -232,6 +244,137 @@ export const specs = pgTable(
   },
 );
 
+// --- M4: the oracle — what "unchanged behaviour" is measured against -------------------
+
+/**
+ * One golden test case: a real call, and what the current procedure does with it.
+ *
+ * Inputs are never invented. They are taken verbatim from a captured invocation, and
+ * `sourceInvocationId` is the receipt — `verify-m4` reads it back and asserts the stored
+ * parameters still byte-match the capture, so "generated from real traffic" is checkable
+ * rather than claimed.
+ *
+ * The expectation is **not** the captured result. `docs/DECISIONS.md` records why: ninety
+ * days of later traffic touched the same rows, so a captured value and a value produced
+ * today differ for reasons that have nothing to do with the code. The baseline is recorded
+ * by executing the current procedure inside a rolled-back transaction, which is the only
+ * comparison where both sides saw identical state.
+ */
+export const goldenTests = pgTable(
+  'golden_tests',
+  {
+    id: serial('id').primaryKey(),
+    procedureId: integer('procedure_id')
+      .notNull()
+      .references(() => procedures.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    /** Which observed branch this case covers, from the capture's own coverage proxy. */
+    branchKey: text('branch_key'),
+    /** Provenance. The captured invocation these inputs came from. */
+    sourceInvocationId: bigint('source_invocation_id', { mode: 'number' }).notNull(),
+    inputParams: jsonb('input_params').notNull(),
+    /** What the clock said when the traffic ran. Not what the baseline saw — see below. */
+    capturedContext: jsonb('captured_context'),
+    /** What the clock said when the expectation was recorded. M6 pins the service to this. */
+    baselineContext: jsonb('baseline_context'),
+    expectedResult: jsonb('expected_result').notNull(),
+    expectedWriteSet: jsonb('expected_write_set').notNull(),
+    /** Which normalisations the expectation depends on, so it cannot overclaim. */
+    normalisations: jsonb('normalisations').notNull(),
+    /** The agent's one line on why this case earns its place. */
+    rationale: text('rationale'),
+    agentRunId: integer('agent_run_id').references(() => agentRuns.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [unique('uq_golden_test_name').on(t.procedureId, t.name), index('ix_golden_tests_proc').on(t.procedureId)],
+);
+
+/**
+ * A rule that must hold after any run, evaluated in code over the result and the write set.
+ *
+ * `kind` comes from a closed vocabulary (see ../oracle/invariants.ts). An invariant the
+ * agent could not express in it is stored with `evaluable = false` and is reported as
+ * advisory — recorded, never counted as passing. A rule nothing checks is a comment, and
+ * a comment presented as verification is exactly what this build exists not to ship.
+ */
+export const invariants = pgTable(
+  'invariants',
+  {
+    id: serial('id').primaryKey(),
+    procedureId: integer('procedure_id')
+      .notNull()
+      .references(() => procedures.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    /** sum_identity | non_negative | value_from_table | advisory */
+    kind: text('kind').notNull(),
+    spec: jsonb('spec').notNull(),
+    /** Czech, one or two sentences — this is what a reviewer reads on the procedure screen. */
+    rationale: text('rationale'),
+    evaluable: boolean('evaluable').notNull().default(true),
+    agentRunId: integer('agent_run_id').references(() => agentRuns.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [unique('uq_invariant_name').on(t.procedureId, t.name), index('ix_invariants_proc').on(t.procedureId)],
+);
+
+/** One execution of a procedure's whole oracle: every golden case, then every invariant. */
+export const oracleRuns = pgTable(
+  'oracle_runs',
+  {
+    id: serial('id').primaryKey(),
+    procedureId: integer('procedure_id')
+      .notNull()
+      .references(() => procedures.id, { onDelete: 'cascade' }),
+    /** baseline | verify | probe — a baseline run records expectations, the others check them. */
+    kind: text('kind').notNull(),
+    goldenPassed: integer('golden_passed').notNull().default(0),
+    goldenFailed: integer('golden_failed').notNull().default(0),
+    invariantsChecked: integer('invariants_checked').notNull().default(0),
+    invariantsViolated: integer('invariants_violated').notNull().default(0),
+    durationMs: integer('duration_ms'),
+    startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp('finished_at', { withTimezone: true }),
+  },
+  (t) => [index('ix_oracle_runs_proc').on(t.procedureId)],
+);
+
+export const goldenResults = pgTable(
+  'golden_results',
+  {
+    id: serial('id').primaryKey(),
+    oracleRunId: integer('oracle_run_id')
+      .notNull()
+      .references(() => oracleRuns.id, { onDelete: 'cascade' }),
+    goldenTestId: integer('golden_test_id')
+      .notNull()
+      .references(() => goldenTests.id, { onDelete: 'cascade' }),
+    /** pass | fail | error */
+    status: text('status').notNull(),
+    /** The first field that differed, canonical form. Empty on a pass. */
+    detail: text('detail'),
+    durationMs: integer('duration_ms'),
+  },
+  (t) => [unique('uq_golden_result').on(t.oracleRunId, t.goldenTestId)],
+);
+
+export const invariantResults = pgTable(
+  'invariant_results',
+  {
+    id: serial('id').primaryKey(),
+    oracleRunId: integer('oracle_run_id')
+      .notNull()
+      .references(() => oracleRuns.id, { onDelete: 'cascade' }),
+    invariantId: integer('invariant_id')
+      .notNull()
+      .references(() => invariants.id, { onDelete: 'cascade' }),
+    casesChecked: integer('cases_checked').notNull().default(0),
+    casesViolated: integer('cases_violated').notNull().default(0),
+    /** Which golden case broke it first, and by how much. This is the finding. */
+    firstViolation: text('first_violation'),
+  },
+  (t) => [unique('uq_invariant_result').on(t.oracleRunId, t.invariantId)],
+);
+
 export const proceduresRelations = relations(procedures, ({ many }) => ({
   columns: many(procedureColumns),
 }));
@@ -249,3 +392,8 @@ export type AgentStep = typeof agentSteps.$inferSelect;
 export type AuditEntry = typeof auditEntries.$inferSelect;
 export type PolicyRule = typeof policyRules.$inferSelect;
 export type Spec = typeof specs.$inferSelect;
+export type GoldenTest = typeof goldenTests.$inferSelect;
+export type Invariant = typeof invariants.$inferSelect;
+export type OracleRun = typeof oracleRuns.$inferSelect;
+export type GoldenResult = typeof goldenResults.$inferSelect;
+export type InvariantResult = typeof invariantResults.$inferSelect;

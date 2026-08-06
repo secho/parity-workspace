@@ -15,6 +15,13 @@
       "when": 1785946225101,
       "tag": "0001_workable_toad_men",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1785996171807,
+      "tag": "0002_rapid_gamma_corps",
+      "breakpoints": true
     }
   ]
 }

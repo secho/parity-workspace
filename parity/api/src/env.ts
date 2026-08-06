@@ -16,8 +16,17 @@ export interface Config {
     server: string;
     port: number;
     database: string;
+    /** db_datareader + VIEW DEFINITION. Everything that analyses the estate uses this. */
     user: string;
     password: string;
+    /**
+     * The only principal allowed to EXECUTE, used solely by the oracle harness and always
+     * inside a transaction that is rolled back. Kept separate from the pair above so that
+     * "Parity cannot write to the estate it analyses" stays a true statement about the
+     * credential the analysis runs under, rather than one about how carefully it is used.
+     */
+    runnerUser: string;
+    runnerPassword: string;
   };
   /** Real files the SDK loads and the UI lists. Same directory, no copy in between. */
   skillsDir: string;
@@ -90,6 +99,8 @@ export function loadConfig(): Config {
       database: required('MSSQL_DATABASE', 'ParityShop'),
       user: required('MSSQL_USER', 'sa'),
       password: required('MSSQL_SA_PASSWORD'),
+      runnerUser: required('PARITY_RUNNER_USER', 'parity_runner'),
+      runnerPassword: required('PARITY_RUNNER_PASSWORD', 'Parity_Runner_2026!'),
     },
     skillsDir: process.env.PARITY_SKILLS_DIR ?? '/app/skills',
     agentWorkspace: process.env.PARITY_AGENT_WORKSPACE ?? '/tmp/parity-agent',

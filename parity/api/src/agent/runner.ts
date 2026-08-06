@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
-import { agentRuns, agentSteps, procedures } from '../db/schema.js';
+import { agentRuns, agentSteps, auditEntries, procedures } from '../db/schema.js';
 import type { Config } from '../env.js';
 import { llmEndpoint, runSkill, type RunResult } from './client.js';
 import { buildHooks } from './hooks.js';
@@ -109,6 +109,27 @@ export async function executeRun(
       },
     });
 
+    // A tool the SDK refuses because it is not in `allowedTools` is denied *before* PreToolUse
+    // runs, so no hook fires and nothing reaches the audit log. That leaves the audit with a
+    // hole in the worst possible place: `sp_PlaceOrder`'s run attempted Bash — the agent
+    // reaching for a shell it does not have — and that attempt was the one event in 185 tool
+    // calls with no record of it. The SDK reports these on the result message, so the receipt
+    // exists; it just was not being written down.
+    //
+    // Same shape as M3's PostToolUseFailure fix: the claim is that nothing is instrumented by
+    // hand and therefore nothing can be forgotten, and a silent gap is worse than no claim.
+    for (const denial of result.permissionDenials) {
+      await db.insert(auditEntries).values({
+        agentRunId: run.id,
+        seq: nextSeq(),
+        toolName: denial.tool_name,
+        inputSummary: JSON.stringify(denial.tool_input).slice(0, 500),
+        resultSummary: null,
+        outcome: 'denied',
+        reason: `nepovolený nástroj pro tuhle úlohu — ${denial.tool_name} není v allowedTools`,
+      });
+    }
+
     await db
       .update(agentRuns)
       .set({
@@ -134,7 +155,7 @@ export async function executeRun(
   }
 }
 
-// --- the two M3 skills ---------------------------------------------------------------
+// --- the skills ------------------------------------------------------------------------
 
 /** Triage reads and classifies. It may record a classification and nothing else. */
 export const triageRun = (procedureName: string): StartRun => ({
@@ -166,4 +187,26 @@ which branches actually run.
 
 Write the finished specification with write_spec. It must be in Czech and must follow the
 section structure the skill gives you.`,
+});
+
+/**
+ * Generate-oracle chooses cases and states invariants. It cannot execute anything — the
+ * expectations are recorded afterwards by running the procedure, which is Parity's job and
+ * not the model's.
+ */
+export const oracleRun = (procedureName: string): StartRun => ({
+  skillName: 'generate-oracle',
+  taskClass: 'oracle',
+  procedureName,
+  maxTurns: 24,
+  allowedTools: [TOOL.readProcedure, TOOL.queryCapture, TOOL.listCaptureCases, TOOL.writeGoldenTests, TOOL.writeInvariants],
+  prompt: `Use the generate-oracle skill to build the behavioural reference for ${procedureName}.
+
+Read its source with read_procedure and its captured traffic with query_capture. Then call
+list_capture_cases — that is the set of real invocations you may choose from, one per observed
+branch. Choose the smallest set that covers every branch, and record it with write_golden_tests
+citing the invocation ids. You cannot supply inputs of your own; they are read from the capture.
+
+Then propose invariants with write_invariants. Use the supported kinds so they are actually
+checked; file anything you cannot express that way as advisory rather than dropping it.`,
 });

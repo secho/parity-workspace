@@ -1,4 +1,5 @@
 .PHONY: up down remount seed seed-checksum traffic traffic-checksum ingest demo-reset map-estate \
+        generate-oracles \
         verify-m0 verify-m1 verify-m2 verify-m3 verify-m4 verify-m5 verify-m6 verify-m7
 
 # Waits only for the containers that must exist BEFORE seeding. shop-api's health
@@ -86,8 +87,16 @@ map-estate:
 verify-m3:
 	npm --prefix scripts install --silent
 	npm --prefix scripts run verify-m3
+
+# One live model run per procedure that has traffic to draw on, then a baseline pass that
+# records what the current procedure does and a verify pass that checks it reproduces.
+# Separate from verify-m4 for the same reason map-estate is separate from verify-m3.
+generate-oracles:
+	docker compose exec -T parity-api npx tsx src/cli/generate-oracles.ts
+
 verify-m4:
-	@echo "TODO M4 acceptance"; exit 1
+	npm --prefix scripts install --silent
+	npm --prefix scripts run verify-m4
 verify-m5:
 	@echo "TODO M5 acceptance"; exit 1
 verify-m6:

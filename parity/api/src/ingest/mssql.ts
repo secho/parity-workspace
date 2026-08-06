@@ -2,9 +2,14 @@ import sql from 'mssql';
 import type { Config } from '../env.js';
 
 /**
- * Parity's only route into the estate. Read-only by intent: nothing here writes, and
- * Parity never imports the demo app's code. That separation is the whole argument — it
- * has to look like something that could be pointed at Alza's real estate tomorrow.
+ * Parity's only route into the estate. Parity never imports the demo app's code — that
+ * separation is the whole argument, because it has to look like something that could be
+ * pointed at Alza's real estate tomorrow.
+ *
+ * Two principals, and the difference between them is the point. `connect` is the analysis
+ * connection: db_datareader plus VIEW DEFINITION, and every query in this file uses it.
+ * `connectRunner` is the one exception in the codebase — the oracle harness, which has to
+ * execute a procedure to find out what it does. Nothing here writes under either.
  */
 
 export interface EstateProcedure {
@@ -31,15 +36,32 @@ export interface CatalogRow {
  */
 const NOT_VERIFY = "(CallerContext IS NULL OR CallerContext NOT LIKE 'verify:%')";
 
-export async function connect(config: Config): Promise<sql.ConnectionPool> {
-  return new sql.ConnectionPool({
+const pool = (config: Config, user: string, password: string): Promise<sql.ConnectionPool> =>
+  new sql.ConnectionPool({
     server: config.mssql.server,
     port: config.mssql.port,
     database: config.mssql.database,
-    user: config.mssql.user,
-    password: config.mssql.password,
+    user,
+    password,
     options: { encrypt: true, trustServerCertificate: true, requestTimeout: 120_000 },
   }).connect();
+
+/** The analysis connection. Cannot write, and the engine is what refuses it. */
+export async function connect(config: Config): Promise<sql.ConnectionPool> {
+  return pool(config, config.mssql.user, config.mssql.password);
+}
+
+/**
+ * The execution connection, for the oracle harness only.
+ *
+ * May EXECUTE and may write; every caller wraps the call in a transaction it always rolls
+ * back. Two things it still cannot do, and both are grants rather than conventions: it has
+ * no DDL, so it cannot alter the estate it is verifying; and it is DENYed
+ * `sp_SyncWarehouseDispatch`, because that procedure sends mail and a sent mail cannot be
+ * rolled back. See `parity-platform-demo-app/db/41-parity-runner.sql`.
+ */
+export async function connectRunner(config: Config): Promise<sql.ConnectionPool> {
+  return pool(config, config.mssql.runnerUser, config.mssql.runnerPassword);
 }
 
 export async function readProcedures(pool: sql.ConnectionPool): Promise<EstateProcedure[]> {

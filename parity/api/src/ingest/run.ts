@@ -1,6 +1,18 @@
 import { sql as raw } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
-import { agentRuns, couplingEdges, procedureCalls, procedureColumns, procedures, specs } from '../db/schema.js';
+import {
+  agentRuns,
+  couplingEdges,
+  goldenResults,
+  goldenTests,
+  invariantResults,
+  invariants,
+  oracleRuns,
+  procedureCalls,
+  procedureColumns,
+  procedures,
+  specs,
+} from '../db/schema.js';
 import type { Config } from '../env.js';
 import { couplingEdges as buildEdges, writeOwners, type WriterEntry } from './coupling.js';
 import { connect, readCatalog, readInvocationStats, readProcedures } from './mssql.js';
@@ -157,7 +169,11 @@ export async function ingest(db: Db, config: Config): Promise<IngestSummary> {
 export async function resetState(db: Db): Promise<void> {
   // procedures cascades to specs, agent_runs, agent_steps and audit_entries. policy_rules
   // is configuration rather than state and is reasserted on boot, so it is left alone.
+  //
+  // The oracle tables are named rather than left to CASCADE: beat 1 opens on coverage zero,
+  // and coverage is a function of oracle_state, which only moves because these rows exist.
+  // A demo-reset that quietly left them behind would open the demo on the wrong screen.
   await db.execute(
-    raw`TRUNCATE TABLE ${couplingEdges}, ${procedureCalls}, ${procedureColumns}, ${agentRuns}, ${specs}, ${procedures} RESTART IDENTITY CASCADE`,
+    raw`TRUNCATE TABLE ${couplingEdges}, ${procedureCalls}, ${procedureColumns}, ${goldenResults}, ${invariantResults}, ${oracleRuns}, ${goldenTests}, ${invariants}, ${agentRuns}, ${specs}, ${procedures} RESTART IDENTITY CASCADE`,
   );
 }
