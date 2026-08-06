@@ -27,27 +27,32 @@ Update the checkboxes as you go. This file is the handoff between sessions.
 `make verify-m1` — asserts capture rows exist for all live procs, write sets non-empty for `sp_ReserveStock` across 4 tables, dead procs at zero, distribution is power-law, and a pinned-clock replay of `sp_CalculateOrderTotal` reproduces the captured result exactly.
 
 ## M2 — Estate ingestion
-- [ ] Parity app shell: sidebar, Postgres schema, Drizzle migrations
-- [ ] Ingest procedures from MS SQL: name, source, line count, invocation counts
-- [ ] Column-level `reads[]` / `writes[]` parsed from T-SQL; data-coupling graph built
-- [ ] `blocker` is a **derived property**, never stored
-- [ ] Estate screen live: totals, invocation-weighted coverage, status bar, blocker breakdown, sortable table
+- [x] Parity app shell: sidebar, Postgres schema, Drizzle migrations
+- [x] Ingest procedures from MS SQL: name, source, line count, invocation counts — 14 procedures, 45 287 invocations
+- [x] Column-level `reads[]` / `writes[]` parsed from T-SQL; data-coupling graph built — 562 column accesses, 121 edges, 51 columns written by 2+ procedures
+- [x] The parse is **graded against M1's captured write sets**: every column the estate was observed to write must appear in it. Text parsing recovers the `UPDATE … FROM #temp` statements `sys.dm_sql_referenced_entities` silently drops.
+- [x] `sp_SearchProducts` is entirely dynamic SQL; its reads are parsed out of the string literals and flagged `inferred` rather than reported as nothing
+- [x] `blocker` is a **derived property**, never stored — asserted twice: no such column exists, and the value moves when `oracle_state` moves
+- [x] Parity connects as `parity_reader` (`db_datareader` + `VIEW DEFINITION`), so "it cannot write to the estate" is a permission the gate asserts, not a promise
+- [x] Estate screen live: totals, invocation-weighted coverage, status bar, blocker breakdown, sortable table
+- [x] `make demo-reset` in 1.4 s, back to 14 procedures / coverage 0 / everything `untouched`
 
-`make verify-m2` — asserts 14 procedures ingested, coupling graph has cross-procedure column overlaps, blocker values are computed not persisted.
+`make verify-m2` — 35 checks. Asserts Parity's login can read the estate and its procedure source but is refused a write, 14 procedures ingested with matching line counts, per-procedure invocation counts equal a live `COUNT(*)`, every observed write is covered by the parse, the coupling graph contains the two designed collisions, every written column has exactly one owner, coverage is weighted not counted, ingest is deterministic across two runs, and `demo-reset` returns the estate to its pre-demo state under 120 s.
 
 ## M3 — Agent, skills, spec
-- [ ] Agent SDK wired, `ANTHROPIC_API_KEY`, `settingSources: ['project']`
-- [ ] `parity/skills/*.md` loaded as real files and listed in the UI
-- [ ] Audit log populated from `PostToolUse` hooks; policy gate on `PreToolUse`
-- [ ] `triage` classifies all 14 into oracle classes correctly
-- [ ] `extract-spec` produces a readable Czech spec; run it over all 14
-- [ ] Procedure detail screen: source, spec, agent steps streaming via SSE
-- [ ] Agent runs with cwd in an isolated scratch dir, NOT the workspace root
-- [ ] settingSources points only at parity/skills/ — never the whole project
-- [ ] docs/ is unreachable from the agent's file tools; verify-m3 asserts
-      that a prompt asking the agent to read docs/SPEC.md fails
+- [x] Agent SDK wired, `settingSources: ['project']` — routed through **Claude Platform on AWS** (`CLAUDE_CODE_USE_ANTHROPIC_AWS`, eu-central-1); model IDs unchanged
+- [x] `parity/skills/<name>/SKILL.md` loaded as real files, symlinked per run, listed in the UI
+- [x] Audit log from `PostToolUse` **and `PostToolUseFailure`** hooks; policy gate on `PreToolUse` — 195 tool calls, 195 rows
+- [x] `triage` classifies all 14 correctly — and corrected the answer key on six of them, including a clock branch the M1 survey missed (`sp_GetProductDetail:45`)
+- [x] `extract-spec` produces a readable Czech spec over all 14, each with the six required sections and a non-empty `Otevřené otázky`
+- [x] Procedure detail screen: source, spec, agent steps streaming via SSE; `Provoz` page with skills, policy tiers and audit log
+- [x] Agent runs with cwd in `/tmp/parity-agent/<runId>`, outside the application directory
+- [x] `docs/` is not mounted into the agent's container at all; a live agent asked for it by five paths comes back empty
+- [x] `make map-estate` — 28 live runs, 0 failures, $7.12
 
-`make verify-m3` — asserts every procedure has an `oracle_class` and a `Spec`, audit log has rows for every tool call, a deliberately over-tier action is blocked by the hook.
+`make verify-m3` — **29 checks**. Asserts every procedure has an `oracle_class` matching the committed expectation and a `Spec`, every tool call has an audit row whatever its outcome, a deliberately over-tier call is refused by the hook and writes nothing, the agent cannot reach `docs/SPEC.md`, every run persists enough to replay, and M2's numbers are unmoved.
+
+**Open:** nine of fourteen procedures are `nondet`, so `chybí seam` carries 25 646 of 45 297 invocations. Accurate but a weak roadmap — see the open entry in `docs/DECISIONS.md` on splitting the blocker by seam kind.
 
 ## M4 — Oracle
 - [ ] `generate-oracle` produces golden tests from captured invocations

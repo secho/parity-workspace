@@ -119,3 +119,298 @@ Also from the reviewer. The `BranchKey` proxy was derived from call parameters a
 
 ## 2026-08-05 · SPEC's 200 MB capture bound is now measured
 SPEC §3 requires the capture table stay under ~200 MB and nothing checked it — the design made it very likely true, which is not the same as verified. `verify-m1` now measures it from `sys.allocation_units`.
+
+---
+
+# M2
+
+## 2026-08-05 · Parity keeps its own Postgres, on host port 5433
+SPEC §4 puts Parity's state deliberately outside the database it analyses; the port is the
+part worth recording. 5432 was already taken on the build machine by an unrelated Postgres,
+and M0 already lost half an hour to a port race on 3000. Rules out sharing the demo app's
+MS SQL for convenience, which would have quietly destroyed the "could be pointed at Alza's
+real estate tomorrow" claim — Parity would own tables inside the estate it audits.
+
+## 2026-08-05 · reads/writes come from a text parser, not from the engine
+`sys.dm_sql_referenced_entities` is the obvious source of column-level truth and M0 already
+proved it unusable: it silently drops any statement it cannot bind, which is every
+`UPDATE ... FROM #temp`, and the gnarliest procedures are exactly the ones with temp tables.
+The parser resolves every identifier against `INFORMATION_SCHEMA`, so it cannot invent a
+table and `#ReserveLines`, `FROM DATETIME2` and `FETCH NEXT FROM score_cursor` need no
+special case. It finds 6 writers on `Catalog` and 6 on `OrderLedger`, matching what M0
+observed by execution. Anything it cannot parse — a `MERGE`, say — aborts the ingest rather
+than under-reporting, because an absent coupling edge looks exactly like a non-existent one.
+
+## 2026-08-05 · The parse is graded against reality, not against itself
+`verify-m2` reads M1's captured write sets and asserts every `Table.Column` the estate was
+*observed* to write appears in that procedure's parsed `writes[]`. Costs nothing, mutates
+nothing, and cannot be satisfied by a parser that merely looks right. This is the check that
+makes the coupling graph evidence instead of decoration.
+
+Two adjustments make it sound rather than approximately true. IDENTITY columns are excluded:
+the engine writes them and the source names them nowhere, so the parser correctly cannot see
+them. And the comparison uses the **EXEC closure**, not direct writes — `sp_PlaceOrder`
+orchestrates three other procedures, so its captured write set legitimately contains theirs.
+Without the call graph that reads as 34 parser gaps. The call graph is worth having anyway:
+it is the difference between "this procedure writes 87 columns" and "this procedure writes 53
+and delegates the rest".
+
+## 2026-08-05 · Dynamic SQL is parsed out of the string literals
+`sp_SearchProducts` builds its entire query as a string and hands it to `sp_executesql`, so
+blanking string literals — which every other part of the parser depends on — would report the
+estate's second-hottest procedure as touching nothing. That would be a lie about 29% of all
+traffic on the main screen. String literals that name a real table and read like SQL are
+parsed too, and everything found that way is flagged `inferred`: the parser cannot prove which
+branches concatenate at runtime and should not pretend otherwise. Recovers 21 `Catalog` columns.
+
+## 2026-08-05 · One captured row is contaminated, and the gate says so out loud
+`sp_CalculateOrderTotal` has `Catalog.SoldCount` in exactly one of 2 363 captured write sets,
+and only `sp_PlaceOrder` writes that column. Change Tracking unions the column mask across
+every change to a row since the capture's version, so a concurrent `sp_PlaceOrder` — almost
+certainly `verify-m0`'s probe, which talks to MS SQL directly and bypasses the monolith's
+write lock — landed inside the window. M1 documents that the window can absorb one.
+
+The gate distinguishes the two cases rather than widening to accommodate this. A column
+observed **more than once**, or one that no procedure in the estate writes, is a parser gap
+and fails. A column observed exactly once that some *other* procedure writes is reported as
+residue with its count. Loosening the assertion to make it pass would have hidden the next
+real gap; deleting the row would have hidden the fact that concurrency can do this at all.
+
+## 2026-08-05 · Ingestion excludes `CallerContext LIKE 'verify:%'`
+The same filter `verify-m1` applies to itself. Without it, running an acceptance gate moves
+the numbers on the Estate screen — precisely the drift hard rule 5 exists to prevent.
+
+## 2026-08-05 · Ingest refreshes estate facts; only `demo-reset` touches analysis
+`make ingest` upserts source, line counts, invocation counts and the parsed graphs, and
+deliberately leaves `oracle_class`, `oracle_state`, `campaign_status` and `domain` alone.
+Re-reading the source should not cost a run's worth of agent work. `make demo-reset` truncates
+everything and re-ingests, because beat 1 of the demo opens on fourteen procedures with
+coverage near zero — an empty screen is the wrong resting state. Rules out a single
+destructive ingest, which would have made M3 unable to re-read the estate without redoing
+triage.
+
+## 2026-08-05 · Coupling is ranked by how narrow the sharing is
+The first coupling view was dominated by `ModifiedAt` and `ModifiedBy` — every writer touches
+them, so the genuinely interesting collisions were buried under bookkeeping. Sorting by the
+number of procedures that write each column puts `Catalog.LastQuotedPrice` and
+`OrderLedger.TotalNet` at the top and audit columns at the bottom. A column six procedures
+write is an audit column; a column exactly two write is a fight nobody wrote down. Computed,
+never a hardcoded list of column names — Parity has to stay pointable at an estate whose
+naming conventions it has never seen.
+
+## 2026-08-05 · `blocker` is asserted derived in two independent ways
+Absence of a stored column is necessary but not sufficient — a cached value computed once at
+ingest would pass that check and still drift. `verify-m2` also flips one procedure's
+`oracle_state` directly in Postgres and asserts the blocker the API returns changes with it,
+then restores. The same probe proves coverage is invocation-weighted rather than counted:
+flipping `sp_GetProductDetail` moves coverage to 11,48%, its real share of traffic, where a
+per-procedure count would have said 7,14%.
+
+## 2026-08-05 · Parity connects to ParityShop as `parity_reader`, not as `sa`
+Raised by the reviewer: three places described the link as a "read-only connection" while
+the credential was unrestricted. The whole separation argument — Parity could be pointed at
+Alza's real estate tomorrow — rests on what Parity is *allowed* to do, and "it only reads"
+is a much weaker answer than "it cannot write". `db/40-parity-reader.sql` creates a login
+with `db_datareader` and nothing else, and `verify-m2` asserts all three halves: the login
+can read the estate, it can read procedure source, and the engine refuses its UPDATE.
+
+`GRANT VIEW DEFINITION` is the part that is easy to miss. `db_datareader` can read every
+table in the database and still gets NULL back from `sys.sql_modules.definition`, which is
+the one column the entire ingest is built on. Without it Parity ingests fourteen procedures
+with empty source and the failure presents as a parser bug.
+
+## 2026-08-05 · Four reviewer findings in the parser and the gate, all real
+Caught before the PR merged, and all four were the same class of defect: something that
+looks right and is silently wrong.
+
+**`reads[]` over-reported by ~76 columns.** The write-target ranges that keep a SET target
+from also being scanned as a read were computed with `assignment.indexOf(lhs)`, and `lhs` is
+a *prefix* of `assignment` — so that is always 0 and every range collapsed onto the first
+assignment. `sp_CalculateOrderTotal` listed 15 of its own 17 written columns as reads. The
+offset now comes from the split. Writes were never affected, so the coupling graph was right
+throughout; the Data tab was not.
+
+**Dynamic SQL dropped the fragments that mattered.** Literals were filtered individually for
+"names a real table", but `sp_SearchProducts` assembles its query from pieces —
+`FROM dbo.Catalog c` in one literal, `WHERE c.IsActive = 1` and `ORDER BY c.CreatedAt DESC`
+in others that never mention a table. Exactly those were discarded. All literals are now
+joined so an alias bound by one fragment resolves the columns named in the rest; recovery on
+the estate's second-hottest procedure went from 21 columns to 24, including the filter and
+sort columns that every single call uses. `SELECT *` is widened too, which
+`sp_MigrateCustomerAddresses` needs.
+
+**A gate assertion that could not fail.** "Every written column has exactly one write_owner"
+was `HAVING COUNT(*) > 1` over the owned rows — vacuously true if the feature regressed and
+nothing was owned at all. The same shape as M1's replay assertion. It now also asserts that
+the number of owned columns equals the number of distinct written columns: 124 of 124.
+
+**The CT-residue rule measured the wrong thing.** It counted row-column pairs inside a write
+set, not captures, so a single contaminated capture touching two rows would have failed the
+build while a genuine one-row parser gap passed. Now counted per capture. A clean
+`make seed && make traffic` also took the known residue to 0 of 3056, which confirms the
+diagnosis that it came from `verify-m0`'s probe running concurrently with traffic.
+
+## 2026-08-05 · verify-m2 restores its own probe in `finally`
+The blocker and coverage checks mutate `sp_GetProductDetail` in Parity's Postgres and put it
+back. The restore was a plain statement, so a throw in between — a fetch timeout is the
+realistic one — would have left the estate at 11,48% coverage with a `chybí shadow run`
+blocker: the wrong picture for beat 1, and a confusing one to debug because the gate that
+caused it had already exited. A gate must not be able to damage the thing it measures.
+
+## 2026-08-05 · `make verify-m0` only passes against a pristine seed, and that is not a bug
+Re-running the M0 gate after M2's seed change reported 5 436 orders against an expected
+5 000 and a drifted seed checksum. Neither is caused by the change: `make traffic` places
+real orders through `sp_PlaceOrder`, so the estate legitimately holds more rows afterwards.
+M0's own DECISIONS entry already records that using the shop mutates the estate. verify-m0
+reseeds on the way out, so running it a second time immediately gives 36/36.
+
+Worth stating plainly because it will happen again on every milestone: the gates are not
+independent, and the order is `seed → verify-m0 → traffic → verify-m1 → demo-reset →
+verify-m2`. Running verify-m0 in the middle of that sequence destroys the capture data the
+later two depend on.
+
+---
+
+# M3
+
+## 2026-08-05 · Skills move to `parity/skills/<name>/SKILL.md`
+The Agent SDK discovers skills at `<cwd>/.claude/skills/<name>/SKILL.md` and does not find
+flat files, so the layout was not optional. Content is unchanged. Deviates from SPEC §4's
+`skills/*.md` wording; the upside is that a skill can now carry supporting files — a VAT
+rate table, a worked example — without revisiting the decision at M4.
+
+## 2026-08-05 · The agent's containment is three layers, and the first one is absence
+`docs/SPEC.md` states every procedure's oracle class, which three are dead, and where the
+planted bug is. The M0 entry already ruled that the agent must not read it. Three
+independent things now make that true, in decreasing order of how much argument they need:
+
+1. **`docs/` is not mounted into the container the agent runs in.** The answer key is not
+   merely out of reach, it is not in the filesystem. A path restriction can be reasoned
+   around; an absent file cannot.
+2. **The run workspace is `/tmp/parity-agent/<runId>`, outside `/app`.** This is the one
+   that is easy to get wrong: the SDK walks *up* from `cwd` looking for `.claude/`, so a
+   scratch directory inside the repository would have inherited the workspace root's
+   `.claude/settings.json` — which allows `Bash(*)`. That would have handed the agent a
+   shell and a route to everything, silently. Verified: nothing above `/tmp` holds a
+   `.claude`, and `/app` has none either.
+3. **`allowedTools` grants `Read` and `Write` and nothing else** — no Bash, no Glob, no
+   Grep, no web — with `permissionMode: 'dontAsk'`, which denies anything unlisted rather
+   than prompting. Every fact about a procedure arrives through `read_procedure` or
+   `query_capture`.
+
+`probe-workspace.ts` asserts the structural half on every run of the gate;
+`probe-containment.ts` asserts the live half by pointing the real agent at the file.
+
+## 2026-08-05 · Skills are symlinked into each run workspace, never copied
+The claim on stage is "update one skill file and every subsequent run picks it up", and
+with a copy that is true only in the sense that a rebuild would also make it true. The
+workspace links to the same directory the Provoz page lists and a reviewer can edit
+between runs, so the claim is demonstrable rather than described.
+
+## 2026-08-05 · The SDK's published TypeScript reference disagreed with the shipped types
+Checked before wiring anything, per the plan's own risk list, and three of the shapes the
+docs give are wrong in `@anthropic-ai/claude-agent-sdk@0.3.222`:
+
+- `HookCallback` takes `(input, toolUseID, options)`, not `(payload, extra)`.
+- Blocking a tool call is
+  `{ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason } }`,
+  not a bare `{ permissionDecision: 'deny' }`.
+- `HookCallbackMatcher` is `{ matcher?, hooks: HookCallback[], timeout? }`, not
+  `{ event, callback }`.
+
+Two shapes turned out better than documented and are now load-bearing for the gate:
+`SDKSystemMessage` carries `skills: string[]`, so "the skills really loaded" is an
+assertion rather than an inference; and `SDKResultSuccess` carries `permission_denials`,
+which is exactly the receipt the over-tier probe needs.
+
+## 2026-08-05 · Per-tool token counts do not exist, so the audit log does not invent them
+The SDK reports `usage` and `total_cost_usd` once per run, on the result message. Tokens
+and cost therefore live on `agent_runs`; `audit_entries` records tool name, arguments,
+result summary, duration and outcome. A plausible-looking per-call token number would have
+been the easiest thing in the build to fabricate and the hardest to notice.
+
+## 2026-08-06 · Inference routes through Claude Platform on AWS
+Jan's account. Anthropic-operated with same-day API parity, AWS IAM and AWS Marketplace
+billing — **not** Amazon Bedrock, which is partner-operated with prefixed model IDs and a
+feature subset. The Agent SDK supports it natively: `CLAUDE_CODE_USE_ANTHROPIC_AWS=1` plus
+`ANTHROPIC_AWS_API_KEY`, `ANTHROPIC_AWS_WORKSPACE_ID` and `AWS_REGION`. Model IDs are
+unchanged, so the skill registry and every model reference stayed put.
+
+Strengthens rather than weakens the deck's "Parity is a client of a gateway, never one
+itself" line: the same platform now demonstrably routes three ways — the Anthropic API, a
+LiteLLM-compatible gateway, and a cloud provider — on one config line. `llmRoute()` is the
+only place that decides, and the badge reports the model the SDK actually used.
+
+Both AWS values are required with no fallback, so `agentReadiness()` checks them up front.
+Discovering a missing workspace ID fourteen procedures into a sweep is the wrong place.
+
+## 2026-08-06 · The API Dockerfile must not omit optional dependencies
+`--omit=optional` was copied from the monolith's Dockerfile, where it is harmless. The
+Agent SDK ships its native CLI as a per-platform optional dependency, so the image built
+clean and then failed at the first agent run with `Native CLI binary for linux-arm64 not
+found`. Worth remembering when any future service takes an SDK dependency: the flag is a
+monolith-specific optimisation, not a house style.
+
+## 2026-08-06 · The audit log was losing every failed tool call
+A tool that runs and throws fires `PostToolUseFailure`, not `PostToolUse`. Only the latter
+was registered, so 16 of 195 tool calls in the estate sweep produced no audit row at all —
+and a failed call is the one you most want a record of. The whole claim for hook-derived
+auditing is that nothing is instrumented by hand so nothing can be forgotten; a silent gap
+is worse than no claim.
+
+The gate then hid the fix twice, which is the part worth recording. `verify-m3` counted
+only `outcome = 'allowed'`, so the newly-written `failed` rows read as a gap; narrowing it
+to exclude `blocked` made the policy probe's refused call read as a gap too. Both times the
+hooks were correct and the query was wrong — the same defect as not recording the rows,
+one layer up. A tool call now produces exactly one row whichever way it went, and the
+assertion admits every outcome.
+
+## 2026-08-06 · The expectation table is derived from the T-SQL, not from SPEC §3
+`scripts/m3-expected-classes.json` was first written from SPEC's procedure table. Triage
+disagreed on six of fourteen, and on inspection the agent was right every time — it had
+read the code and the table had not:
+
+- `sp_SearchProducts` — the ordering trap SPEC §3 designed it for, found unprompted: every
+  `ORDER BY` branch sorts a tie-heavy column with no secondary key while paginating with
+  `OFFSET`. Unstable ordering is `nondet` by the skill's own definition.
+- `sp_LegacyPriceImport_v2` — ruled the clock out as normalisable *first*, correctly, then
+  found the real cause in the unexercised `@PriceData IS NULL` branch: every row in an
+  import batch is stamped with the same `@Now`, so `TOP 1 … ORDER BY ModifiedAt DESC` has
+  guaranteed ties and a plan-dependent tie-break.
+- `sp_ReserveStock` — two `SELECT TOP 1` sites with no `ORDER BY`.
+- `sp_GetProductDetail`, `sp_GetCartSummary`, `sp_RecalculateCustomerScore` — clock in a
+  branch condition, or in arithmetic feeding one.
+
+**This corrects an M1 claim.** The M1 entry above records that eleven procedures read the
+clock and *four* branch on it. There are five: `sp_GetProductDetail:45` filters the discount
+window with `AND @Now BETWEEN c.DiscountValidFrom AND c.DiscountValidTo`, so the price it
+returns depends on the day it runs. The M1 survey missed it; triage did not. SPEC §3 calls
+that procedure the easy tier-1 example — the code disagrees, and the code wins.
+
+## 2026-08-06 · A probe reads its verdict from the database, not from a clean return
+`probe-policy` originally reported from the run's return value. The SDK **throws** when a
+run ends on `maxTurns`, and a denied tool makes the agent spend turns explaining itself, so
+the probe died before it could report the refusal it had already successfully provoked. The
+refusal and its consequence are both written by the hook before the run ends, so the verdict
+is now read from `audit_entries` afterwards. A probe that can only report its finding when
+the agent exits tidily fails for the wrong reason.
+
+## 2026-08-06 · OPEN — the blocker table concentrates on one bucket
+Nine of fourteen procedures are `nondet`, carrying 25 646 of 45 297 invocations behind a
+single `chybí seam` blocker. This is the failure mode the M1 clock rule was written to
+prevent, and the rule half-worked: the clock *is* being correctly ruled out as normalisable.
+But `nondet` also covers unstable ordering, and this estate is deliberately full of missing
+`ORDER BY`s, so the classifications are accurate and the concentration is real.
+
+Accuracy is not the problem; "chybí seam · 9 procedur" is a weak roadmap. The proposed fix
+is to split that blocker by *which* seam is needed — clock, ordering, identifier — derived
+from `seam_requirements` in `blocker.ts`, still computed and never stored. "Five need a
+pinned clock, three need stable ordering" answers "what do we do Monday" in a way one bucket
+of nine does not. Deferred rather than done: it changes beat 1's screen, which is Jan's call.
+
+## 2026-08-06 · The SDK discovers its own bundled skills alongside Parity's
+`SDKSystemMessage.skills` reports nineteen skills, not five: Parity's own plus the CLI's
+bundled ones (`doctor`, `loop`, `run`, …). The `skills: [name]` option is a context filter,
+so the model only ever sees the one skill enabled for that run, and the Provoz page lists
+the five real files on disk. Recorded because "the agent loads exactly our five skills" is
+a stronger claim than the init message supports, and someone will read that array on stage.

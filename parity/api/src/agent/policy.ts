@@ -1,0 +1,73 @@
+import { eq } from 'drizzle-orm';
+import type { Db } from '../db/client.js';
+import { policyRules } from '../db/schema.js';
+
+/**
+ * Autonomy tiers, per task class.
+ *
+ * The point of putting this in a table rather than in a prompt is that a prompt is a
+ * request and a table is a rule. The `PreToolUse` hook reads these rows and refuses a call
+ * above the tier for the running task class — the model does not get a vote, and neither
+ * does a cleverly-worded instruction that reached the agent through a procedure comment.
+ *
+ * Tier 1 proceeds. Tier 2 proceeds and is recorded prominently. Tier 3 stops and goes to
+ * a human. `verify-m3` fires a deliberate over-tier call and asserts it is refused.
+ */
+
+export interface Tier {
+  tier: number;
+  requiresHuman: boolean;
+  note: string | null;
+}
+
+export const DEFAULT_POLICY: { taskClass: string; toolName: string; tier: number; requiresHuman: boolean; note: string }[] = [
+  // Triage reads and classifies. It writes one thing: the classification itself.
+  { taskClass: 'triage', toolName: 'mcp__parity__read_procedure', tier: 1, requiresHuman: false, note: 'čtení zdroje procedury' },
+  { taskClass: 'triage', toolName: 'mcp__parity__query_capture', tier: 1, requiresHuman: false, note: 'čtení zachyceného provozu' },
+  { taskClass: 'triage', toolName: 'mcp__parity__write_triage', tier: 2, requiresHuman: false, note: 'zápis klasifikace' },
+  // Writing a spec is not triage's job. Attempting it is the over-tier case the gate probes.
+  { taskClass: 'triage', toolName: 'mcp__parity__write_spec', tier: 3, requiresHuman: true, note: 'mimo rozsah triage' },
+
+  { taskClass: 'spec', toolName: 'mcp__parity__read_procedure', tier: 1, requiresHuman: false, note: 'čtení zdroje procedury' },
+  { taskClass: 'spec', toolName: 'mcp__parity__query_capture', tier: 1, requiresHuman: false, note: 'čtení zachyceného provozu' },
+  { taskClass: 'spec', toolName: 'mcp__parity__write_spec', tier: 2, requiresHuman: false, note: 'zápis specifikace' },
+  { taskClass: 'spec', toolName: 'mcp__parity__write_triage', tier: 3, requiresHuman: true, note: 'mimo rozsah extract-spec' },
+
+  // Nothing opens a PR or records a decision without a person. Wired at M6/M7; the rule
+  // exists now so the tier table on the Provoz page is the real one from the start.
+  { taskClass: 'triage', toolName: 'mcp__parity__open_pr', tier: 3, requiresHuman: true, note: 'PR vždy přes člověka' },
+  { taskClass: 'spec', toolName: 'mcp__parity__open_pr', tier: 3, requiresHuman: true, note: 'PR vždy přes člověka' },
+];
+
+export async function seedPolicy(db: Db): Promise<void> {
+  for (const rule of DEFAULT_POLICY) {
+    await db
+      .insert(policyRules)
+      .values(rule)
+      .onConflictDoUpdate({
+        target: [policyRules.taskClass, policyRules.toolName],
+        set: { tier: rule.tier, requiresHuman: rule.requiresHuman, note: rule.note },
+      });
+  }
+}
+
+export async function loadPolicy(db: Db, taskClass: string): Promise<Map<string, Tier>> {
+  const rows = await db.select().from(policyRules).where(eq(policyRules.taskClass, taskClass));
+  return new Map(rows.map((r) => [r.toolName, { tier: r.tier, requiresHuman: r.requiresHuman, note: r.note }]));
+}
+
+/**
+ * The decision the hook enforces. A tool with no rule for this task class is refused
+ * rather than allowed: an unlisted tool is one nobody thought about, and defaulting an
+ * unconsidered capability to "yes" is how autonomy stops meaning anything.
+ */
+export function decide(policy: Map<string, Tier>, toolName: string): { allow: boolean; reason: string } {
+  // The SDK's own file tools are already constrained by allowedTools and the workspace;
+  // the tier table governs what Parity itself exposes.
+  if (!toolName.startsWith('mcp__parity__')) return { allow: true, reason: 'built-in tool, scoped by workspace' };
+
+  const rule = policy.get(toolName);
+  if (rule === undefined) return { allow: false, reason: `žádné pravidlo pro ${toolName} v této třídě úloh` };
+  if (rule.requiresHuman) return { allow: false, reason: `tier ${rule.tier} — rozhoduje člověk${rule.note ? `: ${rule.note}` : ''}` };
+  return { allow: true, reason: `tier ${rule.tier}` };
+}

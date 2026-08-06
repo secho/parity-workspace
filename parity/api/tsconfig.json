@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    // ES2022, not ES2023 like the monolith: drizzle-kit bundles an esbuild that rejects
+    // an es2023 target when it loads drizzle.config.ts. Nothing here needs the difference.
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "types": ["node"],
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts", "drizzle.config.ts"]
+}

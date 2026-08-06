@@ -93,5 +93,97 @@ services:
       shop-api:
         condition: service_started
 
+  # --- Parity, the platform -------------------------------------------------------
+  #
+  # Parity keeps its own state, deliberately not inside the database it analyses. It
+  # reaches ParityShop over a read-only connection and never imports the demo app's code.
+
+  parity-postgres:
+    image: postgres:17-alpine
+    container_name: parity-postgres
+    environment:
+      POSTGRES_USER: parity
+      POSTGRES_PASSWORD: parity
+      POSTGRES_DB: parity
+    ports:
+      # 5433, not 5432: the presenter's machine already has a Postgres running.
+      - "${PARITY_PG_PORT:-5433}:5432"
+    volumes:
+      - parity-pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U parity -d parity"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  parity-api:
+    build:
+      context: ./parity/api
+    container_name: parity-api
+    environment:
+      PARITY_PG_URL: postgres://parity:parity@parity-postgres:5432/parity
+      MSSQL_HOST: mssql
+      MSSQL_PORT: "1433"
+      MSSQL_DATABASE: ParityShop
+      # db_datareader + VIEW DEFINITION, created by db/40-parity-reader.sql. Parity
+      # cannot write to the estate it analyses — a permission grant rather than a promise.
+      MSSQL_USER: "${PARITY_READER_USER:-parity_reader}"
+      MSSQL_SA_PASSWORD: "${PARITY_READER_PASSWORD:-Parity_Reader_2026!}"
+      PORT: "3000"
+      PARITY_MODE: "${PARITY_MODE:-live}"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      # Point this at a LiteLLM-compatible endpoint to route through a gateway. Alza
+      # already runs one; Parity is a client of a gateway and never one itself, so this
+      # is the whole of the "point it at yours" change.
+      ANTHROPIC_BASE_URL: "${PARITY_LLM_BASE_URL:-}"
+      # Claude Platform on AWS — Anthropic-operated, AWS IAM and Marketplace billing.
+      # Not Amazon Bedrock. Set CLAUDE_CODE_USE_ANTHROPIC_AWS to route through it; the
+      # Agent SDK supports it natively and the model IDs are unchanged.
+      CLAUDE_CODE_USE_ANTHROPIC_AWS: "${CLAUDE_CODE_USE_ANTHROPIC_AWS:-}"
+      ANTHROPIC_AWS_API_KEY: "${ANTHROPIC_AWS_API_KEY:-}"
+      ANTHROPIC_AWS_WORKSPACE_ID: "${ANTHROPIC_AWS_WORKSPACE_ID:-}"
+      AWS_REGION: "${AWS_REGION:-}"
+      # Agent run directories. Outside /app on purpose — the SDK walks UP from cwd
+      # looking for .claude, and a scratch dir inside the app would inherit settings
+      # the agent must not have. See docs/DECISIONS.md.
+      PARITY_AGENT_WORKSPACE: /tmp/parity-agent
+      PARITY_SKILLS_DIR: /app/skills
+    ports:
+      - "${PARITY_API_PORT:-3200}:3000"
+    volumes:
+      - ./parity/api/src:/app/src:ro
+      - ./parity/api/drizzle:/app/drizzle:ro
+      # Skills are real files. Mounted read-write-through from the host so that editing
+      # one mid-demo is picked up by the next run with no rebuild — the claim "update one
+      # file, every agent run sees it" has to be literally true and demonstrable.
+      - ./parity/skills:/app/skills:ro
+    depends_on:
+      parity-postgres:
+        condition: service_healthy
+      mssql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 15s
+
+  parity-web:
+    build:
+      context: ./parity/web
+    container_name: parity-web
+    environment:
+      PARITY_API_ORIGIN: http://parity-api:3000
+    ports:
+      - "${PARITY_WEB_PORT:-5190}:5173"
+    volumes:
+      - ./parity/web/src:/app/src:ro
+      - ./parity/web/index.html:/app/index.html:ro
+    depends_on:
+      parity-api:
+        condition: service_started
+
 volumes:
   mssql-data:
+  parity-pg-data:

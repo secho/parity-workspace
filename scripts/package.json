@@ -5,14 +5,18 @@
   "description": "Milestone acceptance checks. make verify-mN is the definition of done.",
   "scripts": {
     "verify-m0": "tsx verify-m0.ts",
-    "verify-m1": "tsx verify-m1.ts"
+    "verify-m1": "tsx verify-m1.ts",
+    "verify-m2": "tsx verify-m2.ts",
+    "verify-m3": "tsx verify-m3.ts"
   },
   "dependencies": {
-    "mssql": "^11.0.1"
+    "mssql": "^11.0.1",
+    "pg": "^8.13.1"
   },
   "devDependencies": {
     "@types/mssql": "^12.3.0",
     "@types/node": "^22.10.2",
+    "@types/pg": "^8.11.10",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
   }
