@@ -31,6 +31,8 @@ Numerator and denominator are linear combinations, and that is what makes a rate
 
 `referenceScale` **multiplies the reference column** before comparison. A `Rate` column holding `21` to mean 21%, compared against a ratio of `0.21`, needs `0.01`. `write_invariants` echoes back the exact values your rule will compare against — read them. If they do not look like the rates you meant, the scale is inverted and every row will fail, which is indistinguishable from a procedure that is broken everywhere.
 
+`tolerance` must be **smaller than half the smallest gap between the reference values**. A rate table holding 20 % and 21 % is 0.01 apart, so a tolerance of 0.02 matches both — and a derived rate that is wrong by a whole percentage point lands inside it and passes. A tolerance that cannot tell the reference values apart is not checking anything; `write_invariants` refuses it and tells you the largest usable value.
+
 `advisory` is for a rule you believe but cannot express above. Use it rather than dropping the rule or bending it into a kind that does not fit — advisory rules are recorded and shown, and are never counted as verified.
 
 Then state explicitly:

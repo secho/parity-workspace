@@ -11,6 +11,7 @@ import {
   procedures,
 } from '../db/schema.js';
 import type { Config } from '../env.js';
+import type { OracleState } from '../estate/blocker.js';
 import { connectRunner } from '../ingest/mssql.js';
 import { canonicalise, fingerprint, stableKey, type CanonicalOutcome } from './canonicalise.js';
 import { executeRolledBack, readIdentityColumns, readParameters, readPrimaryKeys } from './execute.js';
@@ -253,6 +254,14 @@ export async function runSuite(
 }
 
 /**
+ * The oracle-state ladder, in order. `promote` only ever moves forward along it.
+ *
+ * Mirrors `estate/blocker.ts`'s `OracleState`; kept here as an ordered array because order is
+ * the whole point and a union type has none.
+ */
+const LADDER: OracleState[] = ['none', 'golden', 'invariants', 'shadow', 'proven'];
+
+/**
  * Move `oracle_state`, which is the only thing that moves coverage.
  *
  * A suite with a failing case does not promote at all. Coverage answers "how much of what
@@ -266,9 +275,28 @@ export async function runSuite(
  */
 async function promote(db: Db, procedureId: number, passed: number, failed: number, invariantCount: number): Promise<void> {
   if (passed === 0 || failed > 0) return;
+
+  const earned: OracleState = invariantCount > 0 ? 'invariants' : 'golden';
+  const [current] = await db.select().from(procedures).where(eq(procedures.id, procedureId));
+  if (current === undefined) return;
+
+  // Promote, never demote.
+  //
+  // A passing oracle suite is evidence that the golden tests still hold; it is not evidence
+  // that the shadow run which came after them has been undone. Re-running the suite on a
+  // procedure already at `shadow` used to write `invariants` straight back over it, so the
+  // Estate screen quietly regressed — the blocker went from `čeká na rozhodnutí` back to
+  // `chybí shadow run` and the roadmap told the room something that was no longer true.
+  //
+  // Found by `verify-m5`, whose promotion checks failed after `verify-m4` had re-run the
+  // suites. The gate order is documented and would have avoided it, but a state ladder that
+  // only holds while commands are run in the right order is not a ladder. Same reasoning as
+  // `blocker` being derived: the screen must not be able to drift from what happened.
+  if (LADDER.indexOf(current.oracleState as OracleState) >= LADDER.indexOf(earned)) return;
+
   await db
     .update(procedures)
-    .set({ oracleState: invariantCount > 0 ? 'invariants' : 'golden', campaignStatus: 'oracled' })
+    .set({ oracleState: earned, campaignStatus: 'oracled' })
     .where(eq(procedures.id, procedureId));
 }
 

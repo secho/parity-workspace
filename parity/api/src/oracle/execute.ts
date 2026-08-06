@@ -162,6 +162,28 @@ export interface ExecutionRequest {
 
 const bracket = (identifier: string): string => `[${identifier.replace(/]/g, ']]')}]`;
 
+/**
+ * Bind captured input parameters onto a request, typed from the engine's own metadata.
+ *
+ * Exported because M5's shadow replay calls the same procedures with the same captured
+ * parameters and must bind them identically. A second copy of the type mapping would drift,
+ * and the first symptom would be a "behaviour change" that is really a `varchar` where the
+ * other side sent an `nvarchar`.
+ *
+ * Keys may carry a leading `@` or not, because the capture records whichever the caller used.
+ */
+export function bindParameters(
+  request: sql.Request,
+  parameters: ProcedureParameter[],
+  params: Record<string, unknown>,
+): void {
+  for (const parameter of parameters) {
+    const bare = parameter.name.replace(/^@/, '');
+    const value = params[bare] ?? params[parameter.name] ?? null;
+    request.input(bare, mssqlType(parameter), value);
+  }
+}
+
 /** Run it, watch it, throw the transaction away. */
 export async function executeRolledBack(
   pool: sql.ConnectionPool,
@@ -192,11 +214,7 @@ export async function executeRolledBack(
     ).recordset[0] as AmbientContext;
 
     const call = new sql.Request(transaction);
-    for (const parameter of request.parameters) {
-      const bare = parameter.name.replace(/^@/, '');
-      const value = request.params[bare] ?? request.params[parameter.name] ?? null;
-      call.input(bare, mssqlType(parameter), value);
-    }
+    bindParameters(call, request.parameters, request.params);
 
     const serverNow = async (): Promise<number> =>
       ((await new sql.Request(transaction).query(`SELECT GETDATE() AS at`)).recordset[0].at as Date).getTime();

@@ -816,3 +816,291 @@ Consequence to handle in M5, not later: `DEMO-SCRIPT.md` beat 3 still says "2 00
 calls replayed" and must be updated to the measured figure once it exists. Leaving the two
 disagreeing is exactly the drift hard rule 5 exists to prevent, and the rehearsal at M8 is the
 wrong place to discover it.
+
+---
+
+# M5 — during the build
+
+## 2026-08-06 · The shadow database is a plain BACKUP/RESTORE, and the revert costs 530 ms
+The M5 entry above left the restore mechanism open — snapshot, second seed, or file copy —
+to be chosen on whichever resets fastest. Measured on the real 200 MB estate before writing
+anything: `BACKUP` 391 ms, `RESTORE` as a second database 612 ms, and a **revert of 530 ms,
+repeatable**. `make shadow-db` builds the whole thing from nothing in 0.8 s.
+
+That killed the database-snapshot design this started as. A snapshot reverts faster in
+theory, but at half a second a plain RESTORE is ~1.6 s across the three reverts a shadow run
+needs, against a 16 s replay — and it drops an entire mechanism from the build: snapshot
+lifecycle, its limitations, and a `CREATE DATABASE` grant. Rules out the second-seed route
+too, which would have needed `00-database.sql`, `40-parity-reader.sql` and
+`41-parity-runner.sql` parameterised by database name.
+
+The copy inherits everything by construction, which is worth more than it sounds: Change
+Tracking on twelve tables, the twelve temporal histories, all fourteen procedures, both
+parity logins mapped by SID, and the `DENY EXECUTE ON sp_SyncWarehouseDispatch`. The runner
+is guarded on the copy by the same grant that guards it on the estate, rather than by a
+second copy of the rule.
+
+## 2026-08-06 · RESTORE resets the database owner, and the revert baseline is taken after ownership moves
+Found by hitting it. `RESTORE` restores the owner recorded *in the backup*, so restoring
+ParityShop's own backup handed the shadow copy back to `sa` every time — and the next revert
+failed, because `parity_shadow` was no longer the owner and only the owner may restore. The
+database was then stuck in SINGLE_USER with no principal able to bring it back.
+
+So the revert baseline is backed up **from the shadow database after ownership is
+transferred**, not from ParityShop. Every revert then restores a file that already says
+`parity_shadow`, and ownership survives. `SET MULTI_USER` is attempted in a `finally`
+whatever happens, because a reset that can strand the database it resets is worse than no
+reset.
+
+## 2026-08-06 · `parity_shadow` owns the copy and has no user in the estate at all
+A third principal, and the argument is the same one that split `parity_runner` off
+`parity_reader` at M4: resetting a database is a different act from executing a procedure.
+`RESTORE` over an existing database needs sysadmin, dbcreator, or the database's own owner,
+and this login is the third of those and nothing else — no server role, so it cannot create a
+database; `make shadow-db` runs as `sa` and hands the finished copy over.
+
+The part worth saying out loud: the principal that can wipe and rebuild a database is the
+most dangerous one in the build, and it is the one principal with **no route to production
+whatsoever**. `verify-m5` asserts the engine returns Msg 916 when it reaches for ParityShop.
+
+`VIEW CHANGE TRACKING` is granted to `parity_runner` **on the copy only**. `db_datareader`
+does not imply it, and reading a write set out of CT needs it — but the runner only replays
+on the copy, so that is the only place it needs to see what changed. `41-parity-runner.sql`
+deliberately does not grant it, which keeps the runner's reach into the estate itself at
+exactly what M4 needed.
+
+## 2026-08-06 · The shadow commits, so the Czech line in the demo script had to change
+`MILESTONES.md` M5 said "replay runs in a transaction that always rolls back" and
+`DEMO-SCRIPT.md` beat 3 said *"její transakce se zahazuje"*. Both are now wrong, and
+deliberately: Change Tracking cannot see a transaction that never commits, which is the whole
+reason the M5 entry above chose a separate database. Measured here, the two mechanisms agree
+exactly on the same invocation — same tables, same rows, same money to the cent — and CT
+costs 99 ms against 179 ms for M4's before/after fingerprinting.
+
+What replaces the sentence is stronger, not weaker. "Production is untouched" stops being an
+argument about transaction discipline and becomes an observation about the connection string:
+the shadow path never opens ParityShop at all. Both documents are updated to say that.
+
+## 2026-08-06 · Two passes over the same restored state, and what that bounds
+The comparison is pass A (the procedure) against pass B (the replacement), both replaying the
+same cases in the same order from the same reverted database. M1 and M4 both recorded why the
+obvious alternative — compare today's run to the captured values — is unsound: ninety days of
+later traffic touched the same rows.
+
+The bound, stated rather than discovered at M8: pass B writes different values wherever the
+implementations diverge, so a case could in principle read what an earlier case in the same
+pass wrote. For `sp_CalculateOrderTotal` the only written column it ever reads back is
+`PromoCodeUsed`, and both sides set it identically, so the passes stay comparable. A
+procedure that fed its own outputs back would need a revert per case, at 530 ms each.
+
+## 2026-08-06 · A diff is per case, table and column; a finding is a signature
+An order writes its summary onto every one of its lines, so one wrong total appears on three
+to forty rows. Counting those separately would inflate every number in the demo by the average
+order size and tell nobody anything. Diffs are therefore aggregated per case, table and
+column — 400 cases produced 1 668 of them.
+
+A **finding** is a group of diffs sharing a signature: scope, table, column, and — for numeric
+changes — whether the difference is material or sub-cent. The magnitude bucket is in the
+signature because a finding is a thing a human decides once, and grouping a hundredth-of-a-
+heller rounding difference with a 1 647 Kč VAT difference would force one verdict to cover
+both. It is a structural property of the difference, not a judgement about it; the model still
+decides what each class means. Whether a finding is still open is derived — a
+`behaviour_change` signature with no `decisions` row — never a stored flag, same reasoning as
+`blocker`.
+
+## 2026-08-06 · One model run per finding, and the canonicaliser's work is recorded rather than discarded
+`SPEC.md` §8 says normalise in code first and send only what survives. The measured split on
+the migration target: **1 668 raw differences, 1 600 resolved by canonicalisation, 68
+surviving across 4 findings, 4 model runs.** 95.9% never reached a model.
+
+Two choices make that checkable instead of asserted. Every raw difference is **stored**,
+including the ones canonicalisation resolved, with the normalisation that resolved it and no
+`agent_run_id` — so "the model never saw these" is a query, and `verify-m5` runs it. And
+classification is one run per *finding*, not per difference: asking the same question 68 times
+would be slow, expensive, and free to answer differently each time, which is the drift M4
+already paid for when three runs of `generate-oracle` produced three different suites.
+
+## 2026-08-06 · The hand-written service uses binary floating point, and 18 of 400 orders land on a rounding boundary
+Not planted. The service was written the obvious way — JavaScript numbers, rounded to four
+decimals at each point the procedure assigns to a `DECIMAL(18,4)` variable — and 18 of 400
+replayed orders came out one hundredth of a heller apart from the procedure.
+
+Checked before deciding it was acceptable, because shipping a known transcription error and
+calling it noise would be dishonest. It is not a transcription error: on order 2026003462 the
+exact value is `17 901.982 35`, precisely on the boundary, where SQL Server's decimal
+arithmetic rounds half away from zero and binary floating point has already lost the half.
+
+Kept, and reported as what it is. It is exactly the class of defect a shadow harness exists to
+catch — invisible to any test comparing to two decimal places — and it gives `classify-diff`
+two genuinely different residual classes to tell apart rather than one. The skill's rule that
+a monetary difference is never noise sends it to a human, which is the right answer: a cent is
+for a person to decide.
+
+## 2026-08-06 · The measured numbers, and the three documents that had to move
+`SPEC.md` §4, `MILESTONES.md` and `DEMO-SCRIPT.md` all said "2 000+ captured calls replayed in
+under 60 seconds", written before anything was measured and already superseded by the M5
+entry above. The real figures: **400 cases covering 27 of 27 observed strata, both passes, in
+16.2 s — 40.5 ms per case.** Two thousand calls drawn by volume would have been the same
+handful of branches repeated; 400 drawn by stratum cover every behaviour the estate was
+observed taking.
+
+`DEMO-SCRIPT.md` beat 4 said "three items". The real count is four findings, of which two are
+the promo/VAT defect seen on `TotalVat` and `TotalWithVat` and two are the rounding boundary
+above. Updated to the measured figure rather than left to be discovered at the rehearsal.
+
+## 2026-08-06 · verify-m5 does not run demo-reset, and one of its checks could not fail
+Both caught by reading the gate's own output after it passed 58/58.
+
+**The reset.** An earlier version ended by running `make demo-reset` and asserting the shadow
+tables were empty afterwards. `verify-m4` had already made this decision one milestone
+earlier and for the same reason, and it is worse here: `resetState` truncates `procedures`, so
+the M5 gate took M3's estate sweep and M4's oracle sweep down with M5's shadow run — roughly
+twelve dollars of inference to re-run the gate. `verify-m2` owns the timing and pristine-state
+assertions; what M5 adds is that the four new tables are named in the truncate list, which is
+asserted from the source.
+
+**The vacuous check.** "Every noise verdict carries a reason from the closed list" passed
+against **zero noise verdicts** — canonicalisation had taken all of it, so the model returned
+none. It would have gone on passing with the vocabulary deleted. This is the same shape as
+M1's replay assertion, M2's write-owner assertion and M4's rate check, and each of those
+passed while the thing it named was broken. It now states the contract in both directions
+over every model verdict — a reason exactly when the verdict is noise, an explanation
+otherwise — and the run reports that the noise vocabulary went unexercised rather than
+implying it was verified.
+
+## 2026-08-06 · Canonicalisation can *introduce* a difference, and driving the diff from the raw walk alone dropped it
+The diff engine walks the raw pair and the canonical pair separately: a column that differs in
+the first and not the second is one canonicalisation resolved. That direction is the whole
+point. The other direction looked impossible and is not.
+
+Normalisation is not per value. The GUID and identity maps assign ordinals in order of first
+encounter, **per side**, so two implementations that write the same two new identifiers in the
+opposite order are raw-equal on every row and canonically different on both. Iterating only the
+raw differences would have dropped that entirely — no diff row, nothing on screen, and a
+shadow run reporting clean.
+
+Unreachable for `sp_CalculateOrderTotal`, which inserts no rows and writes no GUIDs, so it
+would have sat undetected until M6 pointed the harness at `sp_PlaceOrder` and its
+`PaymentRef = 'PR-' + NEWID()`. Found by asking what the second walk could contain that the
+first does not, rather than by a failing test. A silently dropped difference is the one failure
+mode this build cannot afford, since it is indistinguishable from success.
+
+## 2026-08-06 · The check that the agent cannot decide was itself a fixture
+Caught by the reviewer, and the fifth instance of this build's recurring defect: an assertion
+that passes on the strength of something the test itself created.
+
+`verify-m5` proved "record_decision is reserved to a human" by selecting the `policy_rules`
+row and asserting `requires_human`. `seedPolicy` writes that row unconditionally on every
+boot, so the check was reading back its own fixture. It would have kept passing if `decide()`
+regressed, or if `record_decision` were quietly added to `classify-diff`'s `allowedTools` —
+and the rule it names is the one the entire decision queue exists to enforce.
+
+`probe-decision` now provokes the refusal for real, the same shape as M3's `probe-policy`: a
+`classify-diff` run is instructed as plainly as possible to record a decision, with the tool
+**granted at the SDK layer on purpose** so that what refuses it can only be Parity's tier
+table. The gate asserts both halves — that the hook blocked it, and that nothing was written.
+One live model run, which is what M3 already pays for the equivalent guarantee.
+
+Three smaller findings from the same review, all fixed:
+
+- **`classify_diff` and the decision undo were unscoped by run.** A signature names a shape,
+  not a run, so once M6 re-runs a shadow after a decision, an unscoped update would reach back
+  and relabel the previous run's rows. Both now scope to one run.
+- **`rowsAffected` counted raw rows on a surviving column**, including rows canonicalisation
+  had resolved, so a finding could claim more rows than it covers. It now takes the count from
+  the canonical walk.
+- **`noiseReasonFor` fell back to `ordering`** for any write-set resolution it could not
+  explain — but only result-set rows are sorted, so ordering can never resolve a write-set
+  value. A plausible label on something nobody understands is how a wrong reason survives
+  review; it now returns `unexplained`, and the gate fails the build on it.
+
+## 2026-08-06 · No chart over time on the shadow tab, and why that is not a gap yet
+`SPEC.md` §4 lists "shadow runs (chart over time + per-run diff list)" for the procedure
+screen. The tab ships the per-run numbers, the verdict breakdown and the findings, and **no
+chart**, because a fresh demo produces exactly one real shadow run and a time series over one
+point is decoration. Absent rather than simulated, per hard rule 4. It becomes worth building
+at M6, when a second run after the human's decision gives the axis two points that mean
+something — which is also the moment the chart would actually say something on stage.
+
+## 2026-08-06 · A newline inside a template literal silently turned every finding into noise
+The worst defect of the milestone, and the one the negative control was built for.
+
+The diff engine lines the raw walk up against the canonical one by a `(table, column)` key,
+and the key was a template literal written out at each of the five places that needed it. An
+edit split one of them across two lines. The producer then emitted `OrderLedger⏎TotalVat`
+while the consumer looked up `OrderLedger TotalVat`, nothing ever matched, and **every
+difference that survived canonicalisation was reclassified as mechanical noise**. The shadow
+run came back `1 668 raw, 1 668 resolved, 0 findings`: a clean board, produced by an engine
+that had stopped being able to find anything.
+
+It typechecked. It ran. It reported success. Nothing in the output looked wrong — the only
+symptom was a zero where a four had been, on a run that is *supposed* to sometimes find
+nothing. This is the exact failure mode `docs/SPEC.md` §1 is organised against, arriving
+through a stray keystroke rather than through a design mistake.
+
+Three things came out of it:
+
+- **`probe-shadow` caught it, and nothing else would have.** The A/A control still passed —
+  an engine that finds nothing passes a test that expects nothing. The one-unit perturbation
+  went from `detected: 1` to `detected: 0`, which is the whole reason the gate refuses a green
+  shadow run without it. M4 shipped `probe-oracle` on the same argument and it held here.
+- **The key is now one function.** `columnKey(table, column)` is defined once and used by
+  every producer and consumer, joined by a NUL rather than a space. One definition cannot
+  disagree with itself, and no column name can contain a NUL.
+- **The container was serving a stale copy of the file.** Repeated whole-file rewrites left
+  Docker's bind mount pointing at an older version, so a fix on the host had no effect inside
+  the container and the debugging went in circles for several rounds. `make remount` did not
+  clear it; replacing the file so it took a new inode did. Worth knowing before a demo: if a
+  change appears to have no effect, compare `wc -c` on both sides before doubting the change.
+
+## 2026-08-06 · A tolerance wide enough to blur the rate table against itself
+Found by re-running the oracle sweep, which M5 was forced to do after its own gate destroyed
+M3's and M4's output. Three runs of `generate-oracle` over `sp_CalculateOrderTotal` had
+previously produced three different suites; this one produced a fourth kind of wrong.
+
+The rule was structurally perfect. Numerator `TotalVat − 0,21 × ShippingCost`, denominator
+`TotalNet + Promo + Loyalty − Shipping`, which reconstructs `NetSubtotal` exactly — and on the
+stacking branch it derives **0,168**, the same figure M4 recorded. It then reported **0
+violations in 39 checks**, because the agent set `tolerance: 0,02` and `|0,168 − 0,15| = 0,018`.
+The derived rate matched the 15 % entry of the reference table and the rule passed.
+
+The table holds {0,10 · 0,15 · 0,20 · 0,21}, whose closest pair is 0,01 apart. Any tolerance at
+or above 0,005 makes two legitimate rates indistinguishable; 0,02 makes four of them mush. A
+rule that cannot tell its own reference values apart is not a rate check, and it had quietly
+swallowed the one finding the whole demo turns on.
+
+M4 met the same trap one parameter along — `referenceScale` inverted — and answered it by
+echoing the compared values back. Echoing was not enough here, because 0,02 looks entirely
+reasonable next to a list of rates. So the platform now **refuses** it: `write_invariants`
+computes the smallest gap between distinct scaled reference values and rejects any tolerance
+at or above half of it, naming the largest usable value in the rejection. The skill states the
+rule too, so the first attempt is usually right rather than corrected. Same division of labour
+as the policy hook and M4's rare-branch floor — a rule that matters is enforced, not requested.
+
+Re-run after the fix: 17 cases, **1 finding**, `derived rate 0.168000 is not in VatRate.Rate
+(0.1000, 0.1500, 0.2000, 0.2100)`. `verify-m4` back to 40/40.
+
+## 2026-08-06 · `promote` moved oracle_state backwards, and the ladder now only goes up
+`verify-m5` failed its two promotion checks: the migration target read `invariants` where it
+should have read `shadow`, with the blocker back at `chybí shadow run`.
+
+Not M5's doing. `verify-m4` re-runs every golden suite, and `promote()` wrote the state a
+passing suite earns — `invariants` — straight over the `shadow` a completed shadow run had
+already set. Running the gates in the documented order avoids it, but a state ladder that only
+holds while commands are issued in the right order is not a ladder, and the visible symptom is
+the Estate screen regressing: the roadmap tells the room something that stopped being true.
+
+`promote` now compares against an explicit ordered ladder and only ever moves forward. A
+passing oracle suite is evidence that the golden tests still hold; it is not evidence that the
+shadow run which came after them has been undone.
+
+## 2026-08-06 · A gate check that counted every run in the database
+`verify-m5`'s "one model run per finding" compared the count of *all* `classify-diff` runs ever
+recorded against this run's finding count. A second shadow run and every `probe-decision`
+invocation both add classify-diff runs, so the check passed or failed on history that had
+nothing to do with the run it was asserting — it read 6 against 4 findings and went red while
+the property it names was true.
+
+Now counted as `COUNT(DISTINCT agent_run_id)` over the diffs of that shadow run. The lesson is
+the one this milestone kept relearning: a gate assertion has to be scoped to the thing it
+claims to measure, or it is measuring the fixture.

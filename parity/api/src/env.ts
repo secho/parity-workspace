@@ -27,7 +27,26 @@ export interface Config {
      */
     runnerUser: string;
     runnerPassword: string;
+    /**
+     * The restored copy M5 replays against. `SPEC.md` §4 requires the replacement to run
+     * somewhere the production-equivalent database is never touched, and a separate database
+     * makes that trivially true rather than argued: the shadow connection never opens
+     * against the estate at all.
+     */
+    shadowDatabase: string;
+    /**
+     * Owner of the shadow database, and the only principal that can restore it. It has no
+     * user in ParityShop — the engine refuses it the estate outright. Deliberately not the
+     * runner: resetting a database is a different act from executing a procedure, the same
+     * reasoning that split the runner off the reader at M4.
+     */
+    shadowOwnerUser: string;
+    shadowOwnerPassword: string;
+    /** The backup every revert restores. Written by `make shadow-db`. */
+    shadowBaseBackup: string;
   };
+  /** The replacement the shadow harness replays against. M5 hand-written, M6 generated. */
+  pricingServiceUrl: string;
   /** Real files the SDK loads and the UI lists. Same directory, no copy in between. */
   skillsDir: string;
   /** Run workspaces. Outside the application directory on purpose — see agent/workspace.ts. */
@@ -101,7 +120,12 @@ export function loadConfig(): Config {
       password: required('MSSQL_SA_PASSWORD'),
       runnerUser: required('PARITY_RUNNER_USER', 'parity_runner'),
       runnerPassword: required('PARITY_RUNNER_PASSWORD', 'Parity_Runner_2026!'),
+      shadowDatabase: required('MSSQL_SHADOW_DATABASE', 'ParityShop_Shadow'),
+      shadowOwnerUser: required('PARITY_SHADOW_USER', 'parity_shadow'),
+      shadowOwnerPassword: required('PARITY_SHADOW_PASSWORD', 'Parity_Shadow_2026!'),
+      shadowBaseBackup: required('MSSQL_SHADOW_BASE_BACKUP', '/var/opt/mssql/backup/ParityShop_Shadow_base.bak'),
     },
+    pricingServiceUrl: required('PRICING_SERVICE_URL', 'http://pricing-service:3000'),
     skillsDir: process.env.PARITY_SKILLS_DIR ?? '/app/skills',
     agentWorkspace: process.env.PARITY_AGENT_WORKSPACE ?? '/tmp/parity-agent',
     mode: process.env.PARITY_MODE ?? 'live',

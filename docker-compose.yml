@@ -93,6 +93,38 @@ services:
       shop-api:
         condition: service_started
 
+  # The migration target: sp_CalculateOrderTotal as a service. It prices against
+  # ParityShop_Shadow and never against ParityShop — the shadow harness compares the two
+  # implementations there, and the estate is not part of the experiment.
+  #
+  # M5 writes this by hand, because a behaviour *change* needs two implementations that
+  # differ and `implement-service` is M6. M6 replaces the source in place; the interface,
+  # the container and the harness stay exactly as they are.
+  pricing-service:
+    build:
+      context: ./parity-platform-demo-app/pricing-service
+    container_name: parityshop-pricing
+    environment:
+      MSSQL_HOST: mssql
+      MSSQL_PORT: "1433"
+      PRICING_DB: "${MSSQL_SHADOW_DATABASE:-ParityShop_Shadow}"
+      PRICING_DB_USER: "${PARITY_RUNNER_USER:-parity_runner}"
+      PRICING_DB_PASSWORD: "${PARITY_RUNNER_PASSWORD:-Parity_Runner_2026!}"
+      PORT: "3000"
+    ports:
+      - "${PRICING_SERVICE_PORT:-3300}:3000"
+    volumes:
+      - ./parity-platform-demo-app/pricing-service/src:/app/src:ro
+    depends_on:
+      mssql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
   # --- Parity, the platform -------------------------------------------------------
   #
   # Parity keeps its own state, deliberately not inside the database it analyses. It
@@ -135,6 +167,15 @@ services:
       # reason that procedure is classified `external` and can never be shadowed.
       PARITY_RUNNER_USER: "${PARITY_RUNNER_USER:-parity_runner}"
       PARITY_RUNNER_PASSWORD: "${PARITY_RUNNER_PASSWORD:-Parity_Runner_2026!}"
+      # The shadow harness replays against a restored copy, never against the estate — which
+      # is what makes "production is untouched" an observation about the connection string
+      # rather than an argument about transaction discipline. parity_shadow owns that copy and
+      # is the only principal that can restore it; it has no user in ParityShop at all.
+      MSSQL_SHADOW_DATABASE: "${MSSQL_SHADOW_DATABASE:-ParityShop_Shadow}"
+      PARITY_SHADOW_USER: "${PARITY_SHADOW_USER:-parity_shadow}"
+      PARITY_SHADOW_PASSWORD: "${PARITY_SHADOW_PASSWORD:-Parity_Shadow_2026!}"
+      MSSQL_SHADOW_BASE_BACKUP: "${MSSQL_SHADOW_BASE_BACKUP:-/var/opt/mssql/backup/ParityShop_Shadow_base.bak}"
+      PRICING_SERVICE_URL: http://pricing-service:3000
       PORT: "3000"
       PARITY_MODE: "${PARITY_MODE:-live}"
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"

@@ -3,6 +3,8 @@ import type { Db } from '../db/client.js';
 import {
   agentRuns,
   couplingEdges,
+  decisions,
+  diffs,
   goldenResults,
   goldenTests,
   invariantResults,
@@ -11,6 +13,8 @@ import {
   procedureCalls,
   procedureColumns,
   procedures,
+  shadowCases,
+  shadowRuns,
   specs,
 } from '../db/schema.js';
 import type { Config } from '../env.js';
@@ -170,10 +174,11 @@ export async function resetState(db: Db): Promise<void> {
   // procedures cascades to specs, agent_runs, agent_steps and audit_entries. policy_rules
   // is configuration rather than state and is reasserted on boot, so it is left alone.
   //
-  // The oracle tables are named rather than left to CASCADE: beat 1 opens on coverage zero,
-  // and coverage is a function of oracle_state, which only moves because these rows exist.
-  // A demo-reset that quietly left them behind would open the demo on the wrong screen.
+  // The oracle and shadow tables are named rather than left to CASCADE: beat 1 opens on
+  // coverage zero, and coverage is a function of oracle_state, which only moves because these
+  // rows exist. A demo-reset that quietly left them behind would open the demo on the wrong
+  // screen — with a decision queue still holding yesterday's findings.
   await db.execute(
-    raw`TRUNCATE TABLE ${couplingEdges}, ${procedureCalls}, ${procedureColumns}, ${goldenResults}, ${invariantResults}, ${oracleRuns}, ${goldenTests}, ${invariants}, ${agentRuns}, ${specs}, ${procedures} RESTART IDENTITY CASCADE`,
+    raw`TRUNCATE TABLE ${couplingEdges}, ${procedureCalls}, ${procedureColumns}, ${goldenResults}, ${invariantResults}, ${oracleRuns}, ${goldenTests}, ${invariants}, ${decisions}, ${diffs}, ${shadowCases}, ${shadowRuns}, ${agentRuns}, ${specs}, ${procedures} RESTART IDENTITY CASCADE`,
   );
 }

@@ -45,11 +45,28 @@ export const DEFAULT_POLICY: { taskClass: string; toolName: string; tier: number
   { taskClass: 'oracle', toolName: 'mcp__parity__write_triage', tier: 3, requiresHuman: true, note: 'mimo rozsah generate-oracle' },
   { taskClass: 'oracle', toolName: 'mcp__parity__write_spec', tier: 3, requiresHuman: true, note: 'mimo rozsah generate-oracle' },
 
+  // Classifying a difference is a judgement about one finding and nothing more. It may read
+  // the procedure to understand what it is looking at, and it may record the verdict.
+  //
+  // It may NOT record a decision. That rule is the decision queue: the one thing an agent
+  // must never do is decide, on a person's behalf, that changed behaviour is acceptable — so
+  // `record_decision` is tier 3 here, the hook refuses it, and the finding goes to a human.
+  // The tool is fully implemented, which is what makes the refusal mean something.
+  //
+  // It may not run a shadow run either. A classifier that could re-run the experiment it is
+  // being asked about could keep going until it liked the answer.
+  { taskClass: 'diff', toolName: 'mcp__parity__read_procedure', tier: 1, requiresHuman: false, note: 'čtení zdroje procedury' },
+  { taskClass: 'diff', toolName: 'mcp__parity__query_capture', tier: 1, requiresHuman: false, note: 'čtení zachyceného provozu' },
+  { taskClass: 'diff', toolName: 'mcp__parity__classify_diff', tier: 2, requiresHuman: false, note: 'zápis verdiktu nad odchylkou' },
+  { taskClass: 'diff', toolName: 'mcp__parity__run_shadow', tier: 3, requiresHuman: true, note: 'mimo rozsah classify-diff' },
+  { taskClass: 'diff', toolName: 'mcp__parity__record_decision', tier: 3, requiresHuman: true, note: 'o změně chování rozhoduje člověk' },
+
   // Nothing opens a PR or records a decision without a person. Wired at M6/M7; the rule
   // exists now so the tier table on the Provoz page is the real one from the start.
   { taskClass: 'triage', toolName: 'mcp__parity__open_pr', tier: 3, requiresHuman: true, note: 'PR vždy přes člověka' },
   { taskClass: 'spec', toolName: 'mcp__parity__open_pr', tier: 3, requiresHuman: true, note: 'PR vždy přes člověka' },
   { taskClass: 'oracle', toolName: 'mcp__parity__open_pr', tier: 3, requiresHuman: true, note: 'PR vždy přes člověka' },
+  { taskClass: 'diff', toolName: 'mcp__parity__open_pr', tier: 3, requiresHuman: true, note: 'PR vždy přes člověka' },
 ];
 
 export async function seedPolicy(db: Db): Promise<void> {

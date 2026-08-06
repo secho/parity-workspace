@@ -1,11 +1,13 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
-import { and, eq, isNull, ne, or, type SQL } from 'drizzle-orm';
+import { and, desc, eq, isNull, ne, or, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Db } from '../db/client.js';
-import { goldenTests, invariants, procedures, specs } from '../db/schema.js';
+import { decisions, diffs, goldenTests, invariants, procedures, shadowRuns, specs } from '../db/schema.js';
 import type { Config } from '../env.js';
 import { connect, readCatalog } from '../ingest/mssql.js';
 import { invariantSpec, unknownIdentifiers, type InvariantSpec } from '../oracle/invariants.js';
+import { runShadow } from '../shadow/run.js';
+import { outcomeSignature } from '../capture/signature.js';
 
 /**
  * Parity's own tools, in-process — no external MCP servers to run.
@@ -50,67 +52,6 @@ function supersededBy(
 ): SQL | undefined {
   if (agentRunId === null) return eq(table.procedureId, procedureId);
   return and(eq(table.procedureId, procedureId), or(isNull(table.agentRunId), ne(table.agentRunId, agentRunId)));
-}
-
-/**
- * A coarse shape of what one captured call actually did — what it wrote if it writes, and
- * what it returned if it does not.
- *
- * Coarse on purpose. Exact values differ on every call and would make every invocation its own
- * stratum; the sign-and-shape pattern is what separates "a promo was applied and a loyalty
- * discount was not" from "both were", or "in stock" from "backordered" — distinctions the
- * input-derived branch key cannot see, because both procedures resolve them inside the body.
- */
-function outcomeSignature(writeSet: string | null, resultSet: string | null): string {
-  const parts = new Set<string>();
-
-  if (writeSet !== null && writeSet !== '') {
-    try {
-      const parsed = JSON.parse(writeSet) as Record<string, { columns?: { column: string; after: unknown }[] }[]>;
-      for (const [table, images] of Object.entries(parsed)) {
-        for (const image of images ?? []) {
-          for (const change of image.columns ?? []) {
-            const value = typeof change.after === 'string' ? Number(change.after) : change.after;
-            if (typeof value !== 'number' || Number.isNaN(value)) continue;
-            parts.add(`${table}.${change.column}:${value === 0 ? '0' : value > 0 ? '+' : '-'}`);
-          }
-        }
-      }
-    } catch {
-      /* a malformed capture is not a reason to abandon stratification */
-    }
-  }
-
-  // A read writes nothing, so a write-derived signature is empty for every call and the whole
-  // procedure collapses into one stratum. `sp_GetProductAvailability` is the estate's hottest
-  // procedure — 43% of all traffic, one observed branch key — and it drew exactly one candidate
-  // case. Claiming a procedure is covered on the strength of a single replayed call is the
-  // overclaiming the skill exists to forbid, so for reads the result set supplies the shape.
-  if (parts.size === 0 && resultSet !== null && resultSet !== '') {
-    try {
-      const parsed = JSON.parse(resultSet) as unknown[][];
-      parsed.forEach((rows, index) => {
-        // Bucketed, not exact: row counts vary continuously and would make every call unique.
-        const n = Array.isArray(rows) ? rows.length : 0;
-        parts.add(`rs${index}:${n === 0 ? 'empty' : n === 1 ? 'one' : n < 10 ? 'few' : 'many'}`);
-        const first = Array.isArray(rows) ? (rows[0] as Record<string, unknown> | undefined) : undefined;
-        for (const [column, value] of Object.entries(first ?? {})) {
-          const numeric = typeof value === 'string' ? Number(value) : value;
-          if (typeof numeric === 'number' && !Number.isNaN(numeric)) {
-            parts.add(`rs${index}.${column}:${numeric === 0 ? '0' : numeric > 0 ? '+' : '-'}`);
-          } else if (typeof value === 'boolean') {
-            parts.add(`rs${index}.${column}:${value ? 'T' : 'F'}`);
-          } else if (value === null) {
-            parts.add(`rs${index}.${column}:null`);
-          }
-        }
-      });
-    } catch {
-      /* same */
-    }
-  }
-
-  return [...parts].sort().join(' ');
 }
 
 export function parityTools(context: ToolContext) {
@@ -557,6 +498,56 @@ export function parityTools(context: ToolContext) {
           accepted.push({ name: item.name, kind: parsed.data.kind, spec: parsed.data, rationale: item.rationale });
         }
 
+        // A tolerance wide enough to blur the reference table against itself is not a rate
+        // check, and the platform refuses it rather than asking nicely.
+        //
+        // M4 learned that a rate rule's *scale* can be wrong in a way that reads fine in the
+        // JSON, and answered it by echoing the compared values back. `tolerance` is the same
+        // trap one parameter along, and echoing turned out not to be enough: a later run
+        // proposed 0.02 against a table holding {0,10 · 0,15 · 0,20 · 0,21}, whose adjacent
+        // rates are 0,01 apart. That tolerance cannot tell 20 % from 21 %, and it swallowed a
+        // derived rate of 0,168 — the planted promo/VAT defect — by matching it to 0,15 within
+        // 0,018. The suite came back green having lost the one thing it exists to find.
+        //
+        // Same division of labour as the policy hook and M4's rare-branch floor: a rule that
+        // matters is enforced by the platform, not requested in a prompt.
+        const references = new Map<string, number[]>();
+        const tooCoarse = new Set<string>();
+
+        for (const item of accepted.filter((a) => a.kind === 'value_from_table')) {
+          const spec = item.spec as Extract<InvariantSpec, { kind: 'value_from_table' }>;
+          const key = `${spec.referenceTable}.${spec.referenceColumn}`;
+          if (!references.has(key)) {
+            const rows = (
+              await pool.request().query(`SELECT DISTINCT [${spec.referenceColumn}] AS v FROM dbo.[${spec.referenceTable}]`)
+            ).recordset as { v: number }[];
+            references.set(
+              key,
+              rows.map((r) => Number(r.v)),
+            );
+          }
+
+          const scaled = [...new Set((references.get(key) ?? []).map((v) => v * spec.referenceScale))].sort((a, b) => a - b);
+          let gap = Infinity;
+          for (let i = 1; i < scaled.length; i++) gap = Math.min(gap, scaled[i] - scaled[i - 1]);
+          // One reference value has no gap to be confused with, so any tolerance is honest.
+          if (!Number.isFinite(gap) || spec.tolerance < gap / 2) continue;
+
+          tooCoarse.add(item.name);
+          rejected.push(
+            `${item.name}: tolerance ${spec.tolerance} cannot tell the reference values apart — the closest two ` +
+              `(${scaled.join(', ')}) are ${gap.toFixed(4)} apart, so anything at or above ${(gap / 2).toFixed(4)} ` +
+              `matches more than one of them and the rule stops discriminating. Resend with a tolerance below ` +
+              `${(gap / 2).toFixed(4)}, or file it as advisory.`,
+          );
+        }
+
+        if (tooCoarse.size > 0) {
+          const usable = accepted.filter((a) => !tooCoarse.has(a.name));
+          accepted.length = 0;
+          accepted.push(...usable);
+        }
+
         if (accepted.length > 0) {
           // Same accumulation rule as the golden cases, and for the same reason: the agent
           // sent ten invariants in one call and one in the next, and wholesale replacement
@@ -627,12 +618,171 @@ export function parityTools(context: ToolContext) {
     },
   );
 
+  /**
+   * Record the verdict on one finding from a shadow run.
+   *
+   * The vocabulary is closed and the tool enforces it, for the same reason invariants are a
+   * closed vocabulary evaluated in code: free text presented as a verdict is a comment, and a
+   * comment that looks like verification is what this build exists not to ship. A `noise`
+   * reason outside the skill's list is refused rather than stored — the skill's own words are
+   * "if the reason is not in that list, it is **not** noise".
+   */
+  const classifyDiff = tool(
+    'classify_diff',
+    'Record the verdict on one difference from a shadow run: noise with a reason from the closed list, or behaviour_change with a Czech explanation.',
+    {
+      signature: z.string().describe('The finding signature you were given, copied exactly'),
+      verdict: z.enum(['noise', 'behaviour_change']),
+      reason: z
+        .enum(['time', 'identifier', 'ordering', 'float_precision', 'unstable_collection'])
+        .nullable()
+        .describe('Required for noise, must be null for behaviour_change'),
+      explanation_cs: z
+        .string()
+        .describe('Czech. For behaviour_change: what changed and its business consequence, two sentences.'),
+    },
+    async ({ signature, verdict, reason, explanation_cs }) => {
+      if (verdict === 'noise' && reason === null) {
+        return text('Rejected: a noise verdict needs a reason from the list. If none of them fits, it is not noise.');
+      }
+      if (verdict === 'behaviour_change' && reason !== null) {
+        return text('Rejected: a behaviour_change carries no noise reason. Set reason to null.');
+      }
+      if (explanation_cs.trim() === '') {
+        return text('Rejected: explanation_cs is empty. A verdict nobody can read is not a verdict.');
+      }
+
+      // Scoped to the newest run carrying this signature unclassified. A signature names a
+      // shape — `write_set:OrderLedger.TotalVat:material` — not a run, so once M6 re-runs a
+      // shadow after a decision, an unscoped update would reach back and label the previous
+      // run's rows with this run's verdict.
+      const [newest] = await context.db
+        .select({ shadowRunId: diffs.shadowRunId })
+        .from(diffs)
+        .where(and(eq(diffs.signature, signature), isNull(diffs.verdict)))
+        .orderBy(desc(diffs.shadowRunId))
+        .limit(1);
+
+      if (newest === undefined) {
+        return text(`No unclassified difference carries the signature ${signature}. Check you copied it exactly.`);
+      }
+
+      const updated = await context.db
+        .update(diffs)
+        .set({
+          verdict,
+          verdictSource: 'classify-diff',
+          noiseReason: reason,
+          explanationCs: explanation_cs,
+          agentRunId: context.agentRunId,
+        })
+        .where(
+          and(
+            eq(diffs.signature, signature),
+            isNull(diffs.verdict),
+            eq(diffs.shadowRunId, newest.shadowRunId),
+          ),
+        )
+        .returning({ id: diffs.id });
+
+      if (updated.length === 0) {
+        return text(`No unclassified difference carries the signature ${signature}. Check you copied it exactly.`);
+      }
+      return text(
+        `Recorded ${verdict}${reason === null ? '' : ` (${reason})`} for ${signature} — applied to ${updated.length} difference${updated.length === 1 ? '' : 's'}.`,
+      );
+    },
+  );
+
+  /**
+   * Start a shadow run.
+   *
+   * Real work, not a description of it: this replays captured invocations against the
+   * replacement on the restored copy and returns what the diff engine found. Nothing about
+   * the mechanism changes because a model asked for it rather than a human — the same
+   * function the CLI and the API route call.
+   */
+  const runShadowTool = tool(
+    'run_shadow',
+    'Replay captured invocations of a procedure against its replacement on the shadow database, and report what differs.',
+    {
+      name: z.string().describe('Procedure name, e.g. sp_CalculateOrderTotal'),
+      cases: z.number().int().min(1).max(2000).optional().describe('How many captured invocations to replay'),
+    },
+    async ({ name, cases }) => {
+      const result = await runShadow(context.db, context.config, { procedureName: name, limit: cases });
+      return text(
+        [
+          `Shadow run ${result.shadowRunId} against ${result.shadowDatabase}.`,
+          `${result.casesReplayed} cases replayed over ${result.strataCovered}/${result.strataObserved} observed strata in ${(result.replayMs / 1000).toFixed(1)}s.`,
+          `${result.rawDiffs} raw differences; ${result.resolvedByCanonicaliser} were resolved by canonicalisation in code and ${result.surviving} survived.`,
+          '',
+          'Findings:',
+          ...result.findings.map((f) => `  ${f.signature} — ${f.cases} cases`),
+        ].join('\n'),
+      );
+    },
+  );
+
+  /**
+   * Record a human's decision on a finding.
+   *
+   * Tier 3 in the policy table for every task class, so the `PreToolUse` hook refuses it and
+   * the item lands in the queue instead. That is not a placeholder — it is the rule the
+   * decision queue exists to enforce, made executable: the one thing an agent may never do is
+   * decide, on a person's behalf, that changed behaviour is acceptable. The tool is real so
+   * that the refusal is real.
+   */
+  const recordDecision = tool(
+    'record_decision',
+    'Record a decision on one behavioural difference: preserve the old behaviour, accept the new one, or escalate.',
+    {
+      signature: z.string().describe('The finding signature'),
+      action: z.enum(['preserve', 'accept', 'escalate']),
+      note: z.string().describe('Why, in Czech'),
+    },
+    async ({ signature, action, note }) => {
+      const [diff] = await context.db.select().from(diffs).where(eq(diffs.signature, signature)).limit(1);
+      if (diff === undefined) return text(`No finding carries the signature ${signature}.`);
+
+      const [run] = await context.db.select().from(shadowRuns).where(eq(shadowRuns.id, diff.shadowRunId));
+      await context.db
+        .insert(decisions)
+        .values({
+          procedureId: run.procedureId,
+          shadowRunId: diff.shadowRunId,
+          diffSignature: signature,
+          action,
+          note,
+          decidedBy: 'agent',
+          agentRunId: context.agentRunId,
+        })
+        .onConflictDoUpdate({
+          target: [decisions.shadowRunId, decisions.diffSignature],
+          set: { action, note, decidedAt: new Date() },
+        });
+
+      return text(`Recorded ${action} for ${signature}.`);
+    },
+  );
+
   return createSdkMcpServer({
     name: 'parity',
     version: '1.0.0',
     instructions:
       'Tools for reading the stored-procedure estate and recording findings about it. These are the only route to information about a procedure — there is no shell and no file access outside your working directory.',
-    tools: [readProcedure, queryCapture, listCaptureCases, writeTriage, writeSpec, writeGoldenTests, writeInvariants],
+    tools: [
+      readProcedure,
+      queryCapture,
+      listCaptureCases,
+      writeTriage,
+      writeSpec,
+      writeGoldenTests,
+      writeInvariants,
+      classifyDiff,
+      runShadowTool,
+      recordDecision,
+    ],
   });
 }
 
@@ -645,4 +795,8 @@ export const TOOL = {
   writeSpec: 'mcp__parity__write_spec',
   writeGoldenTests: 'mcp__parity__write_golden_tests',
   writeInvariants: 'mcp__parity__write_invariants',
+  classifyDiff: 'mcp__parity__classify_diff',
+  runShadow: 'mcp__parity__run_shadow',
+  recordDecision: 'mcp__parity__record_decision',
+  openPr: 'mcp__parity__open_pr',
 } as const;

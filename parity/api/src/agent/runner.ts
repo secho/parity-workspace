@@ -194,6 +194,37 @@ section structure the skill gives you.`,
  * expectations are recorded afterwards by running the procedure, which is Parity's job and
  * not the model's.
  */
+/**
+ * Classify one finding from a shadow run.
+ *
+ * One run per **finding**, not per differing row. A four-hundred-case replay produces the
+ * same handful of shapes over and over; asking the same question three hundred times would
+ * be slow, expensive, and — worst — free to answer differently each time, which is exactly
+ * the drift hard rule 5 forbids. `docs/DECISIONS.md` records the same lesson from M4, where
+ * three runs of `generate-oracle` produced three different suites.
+ *
+ * Everything mechanical has already happened. What reaches the model is a difference the
+ * canonicaliser could not resolve, and the skill is told so, so that "the ordering is already
+ * sorted, therefore an ordering difference here is real" is available to it as an argument.
+ */
+export const classifyDiffRun = (procedureName: string, finding: string, evidence: string): StartRun => ({
+  skillName: 'classify-diff',
+  taskClass: 'diff',
+  procedureName,
+  maxTurns: 12,
+  allowedTools: [TOOL.readProcedure, TOOL.queryCapture, TOOL.classifyDiff],
+  prompt: `Use the classify-diff skill on one difference found by a shadow run of ${procedureName}.
+
+${evidence}
+
+Canonicalisation has already run in code: stable sorting, clock normalisation, GUID and
+identity normalisation, and float rounding to six decimals. This difference survived all of
+it, so it is not resolvable mechanically.
+
+Record your verdict with classify_diff, using the signature exactly as given:
+  ${finding}`,
+});
+
 export const oracleRun = (procedureName: string): StartRun => ({
   skillName: 'generate-oracle',
   taskClass: 'oracle',

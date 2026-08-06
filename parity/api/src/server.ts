@@ -8,6 +8,7 @@ import { estateRoutes } from './routes/estate.js';
 import { healthRoutes } from './routes/health.js';
 import { opsRoutes } from './routes/ops.js';
 import { oracleRoutes } from './routes/oracle.js';
+import { shadowRoutes } from './routes/shadow.js';
 import { provozRoutes } from './routes/provoz.js';
 
 const config = loadConfig();
@@ -25,6 +26,7 @@ await estateRoutes(app, store.db);
 await opsRoutes(app, store.db, config);
 await agentRoutes(app, store.db, config);
 await oracleRoutes(app, store.db, config);
+await shadowRoutes(app, store.db, config);
 await provozRoutes(app, store.db, config);
 
 const readiness = agentReadiness();
