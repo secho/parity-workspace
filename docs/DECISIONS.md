@@ -765,3 +765,54 @@ This is the same division of labour as the policy hook, and for the same reason:
 matters is enforced by the platform, not requested in a prompt. The alternative — rejecting the
 suite and asking the agent to try again — was rejected because a run that cannot satisfy the
 rule would then produce no oracle at all, trading a silent gap for a loud absence.
+
+---
+
+# M5 — decided before the build
+
+## 2026-08-06 · M5 shadows a hand-written pricing stub, not an agent-generated service
+M5's gate requires the planted promo/VAT bug to surface as `behaviour_change`, and a behaviour
+*change* needs two implementations that differ. `implement-service` is M6, so replaying the old
+procedure against itself would produce only noise and the gate could not be met as written.
+
+M5 therefore writes a minimal pricing service by hand, implementing the spec correctly — VAT on
+the full net in every branch. The shadow run diffs the old procedure against it, `classify-diff`
+sorts noise from behaviour, and the promo/VAT divergence surfaces exactly as the acceptance
+demands. M6 then replaces the stub with the agent-generated service against a harness that is
+already proven.
+
+Rules out merging `implement-service` into M5. `SCHEDULE.md` already names M5 the hard one; a
+failure with both a new harness and a newly generated service in play is ambiguous between them,
+and that ambiguity is expensive precisely where there is least time. The cost accepted is a
+throwaway implementation, and that the M5 screen shows a service no agent wrote.
+
+## 2026-08-06 · The shadow runs against a separate restored database
+`SPEC.md` §4 says "restored snapshot database" and M4's rolled-back-transaction harness was the
+tempting shortcut, since it exists and `verify-m4` already proves it leaks nothing.
+
+Taken on performance, and the reason is the same one M4 hit from the other side: **Change
+Tracking cannot see a transaction that never commits.** On a separate database the replay can
+COMMIT, which puts CT back in play — the mechanism M1 measured at ~40 ms per captured call
+against the 100–176 ms per case that before/after fingerprinting costs today. It also makes
+"production is provably untouched" trivially true rather than argued: the shadow connection
+never opens against ParityShop at all.
+
+The restore mechanism — BACKUP/RESTORE, a second `make seed` under another database name, or a
+file-level copy — is deferred to implementation and chosen on whichever resets fastest, since
+`demo-reset` has to stay under two minutes.
+
+## 2026-08-06 · Coverage by branch, not by volume — the 2 000-call target is superseded
+`SPEC.md` §4 and `DEMO-SCRIPT.md` beat 3 both say 2 000+ replayed calls in under 60 s. That
+number was written before anything was measured. M5 will instead replay a stratified few hundred
+chosen to cover every observed branch, and report the real figure.
+
+The argument for the change is that the number was measuring the wrong thing. Two thousand calls
+of `sp_CalculateOrderTotal` drawn by volume are overwhelmingly the same handful of branches
+repeated; a few hundred drawn by stratum cover strictly more behaviour and take a fraction of the
+time. M4 already demonstrated this on the selection side — the estate's hottest procedure had one
+observed branch key across 588 sampled calls, and volume told us nothing the shape did not.
+
+Consequence to handle in M5, not later: `DEMO-SCRIPT.md` beat 3 still says "2 000+ captured
+calls replayed" and must be updated to the measured figure once it exists. Leaving the two
+disagreeing is exactly the drift hard rule 5 exists to prevent, and the rehearsal at M8 is the
+wrong place to discover it.
