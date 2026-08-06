@@ -1,6 +1,6 @@
 .PHONY: up down remount seed seed-checksum traffic traffic-checksum ingest demo-reset map-estate \
         generate-oracles shadow-db shadow-run implement-service adopt-service service-suite \
-        github-token open-pr record-golden replay-check \
+        github-token open-pr record-golden replay-check restore-golden reset-procedure \
         verify-m0 verify-m1 verify-m2 verify-m3 verify-m4 verify-m5 verify-m6 verify-m7
 
 # Waits only for the containers that must exist BEFORE seeding. shop-api's health
@@ -207,6 +207,30 @@ record-golden:
 replay-check:
 	npm --prefix scripts install --silent
 	npm --prefix scripts run replay-check
+
+# Put the recorded analysis back. Clears first, because a data-only restore into populated
+# tables collides on every primary key — and that clearing is exactly what demo-reset does,
+# which is the point: reset and restore are two halves of one mechanism.
+restore-golden:
+	npm --prefix scripts install --silent
+	npm --prefix scripts run restore-golden
+
+# Put ONE procedure back to "nothing analysed yet" and leave the other thirteen alone. This is
+# what makes the lane rehearsable: `demo-reset` is all-or-nothing by design, and re-running a
+# whole estate's analysis costs roughly $16 and most of an hour.
+#
+# KEEP_SERVICE=1 leaves the generated service on disk. That is the usual case when rehearsing
+# the campaign, because regenerating a service is a live Opus run; without it the directory goes
+# too, so the next lane starts from genuinely nothing.
+reset-procedure:
+	@test -n "$(PROC)" || { echo "usage: make reset-procedure PROC=<name> [KEEP_SERVICE=1]"; exit 1; }
+	docker compose exec -T parity-api npx tsx src/cli/reset-procedure.ts "$(PROC)"
+	@if [ -z "$(KEEP_SERVICE)" ]; then \
+	   rm -rf "parity-platform-demo-app/pricing-service-generated/src/$(PROC)"; \
+	   echo "  removed the generated service source (KEEP_SERVICE=1 to keep it)"; \
+	 else \
+	   echo "  kept the generated service source"; \
+	 fi
 
 verify-m7:
 	@echo "TODO M7 acceptance"; exit 1

@@ -170,10 +170,51 @@ async function check(): Promise<void> {
   if (failures > 0) process.exit(1);
 }
 
+/**
+ * Put the recorded analysis back into the live database.
+ *
+ * Clears first, because a data-only restore into populated tables collides on every primary
+ * key. That clearing is exactly what `resetState()` does, which is the point: reset and restore
+ * are two halves of one mechanism rather than two features that happen to touch the same rows.
+ *
+ * This is what makes `make demo-reset` safe to run at any moment — beat 1 gets its blank slate,
+ * and the ~$16 of analysis behind it is two seconds away.
+ */
+async function restore(): Promise<void> {
+  const recorded = JSON.parse(await readFile(COUNTS, 'utf8')) as Record<string, number>;
+
+  // TRUNCATE in one statement, so foreign keys never see a half-empty database. RESTART
+  // IDENTITY because the dump carries its own setval() calls — without the restart the
+  // sequences would be whatever the cleared rows left behind.
+  await psql('parity', `TRUNCATE TABLE ${SNAPSHOT_TABLES.join(', ')} RESTART IDENTITY CASCADE`);
+  await exec(
+    'bash',
+    [
+      '-c',
+      `gunzip -c '${SNAPSHOT}' | docker compose exec -T parity-postgres psql -U parity -d parity -v ON_ERROR_STOP=1 -f - >/dev/null`,
+    ],
+    { cwd: ROOT, maxBuffer: 512 * 1024 * 1024 },
+  );
+
+  const live = await counts('parity');
+  let failures = 0;
+  for (const table of SNAPSHOT_TABLES) {
+    if (live[table] !== recorded[table]) {
+      failures += 1;
+      console.log(`  \x1b[31mFAIL\x1b[0m  ${table.padEnd(20)} ${recorded[table]} → ${live[table]}`);
+    }
+  }
+
+  const total = Object.values(live).reduce((a, b) => a + b, 0);
+  console.log(failures === 0 ? `restored ${total.toLocaleString('en-GB')} rows` : `\n${failures} tables did not restore`);
+  if (failures > 0) process.exit(1);
+}
+
 const command = process.argv[2];
 if (command === 'record') await record();
 else if (command === 'check') await check();
+else if (command === 'restore') await restore();
 else {
-  console.error('usage: golden.ts record|check');
+  console.error('usage: golden.ts record|check|restore');
   process.exit(1);
 }
