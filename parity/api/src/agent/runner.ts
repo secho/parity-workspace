@@ -35,6 +35,15 @@ export interface RunHandle {
   agentRunId: number;
   result: RunResult;
   blocked: { toolName: string; reason: string }[];
+  /**
+   * Replay only: which artefact tables the run re-materialised, and how many rows into each.
+   *
+   * A live run leaves this undefined — it wrote its artefacts through its tools, and the audit
+   * log is the record of that. A replayed run copies them from the replay source, and this is how
+   * `verify-m7` reads back that a replayed `extract-spec` produced a specification rather than
+   * nine steps and an empty tab.
+   */
+  materialised?: Record<string, number>;
 }
 
 export async function executeRun(

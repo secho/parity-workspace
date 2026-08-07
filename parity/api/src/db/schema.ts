@@ -1,6 +1,5 @@
 import { relations } from 'drizzle-orm';
 import {
-  type AnyPgColumn,
   bigint,
   boolean,
   index,
@@ -165,8 +164,14 @@ export const agentRuns = pgTable(
      * but it spent nothing, so `cost_usd` and the token counts stay NULL. This column is the
      * difference between "the model produced this" and "this is a recording of the model
      * producing it", and `verify-m7` reads it back rather than trusting the mode flag.
+     *
+     * **Deliberately not a foreign key.** The id it holds belongs to the REPLAY SOURCE — a second
+     * database (`../replay/source.ts`) that `make demo-reset` cannot reach, which is the only way
+     * beat 1's empty estate and a replayed beat 2 can both be true. A cross-database reference is
+     * not something a foreign key can express, and the constraint was dropped at M7 rather than
+     * kept as a lie that happened to hold while the two databases were one.
      */
-    replayedFrom: integer('replayed_from').references((): AnyPgColumn => agentRuns.id, { onDelete: 'set null' }),
+    replayedFrom: integer('replayed_from'),
 
     startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
     finishedAt: timestamp('finished_at', { withTimezone: true }),
@@ -447,11 +452,12 @@ export const shadowRuns = pgTable(
      * The recorded shadow run this one re-materialised, or null for a run that actually opened
      * a connection to the shadow copy and replayed cases against it.
      *
-     * Same claim as `agent_runs.replayed_from`, and it matters more here: a replayed shadow run
-     * touches no database at all, so a row that did not say so would be indistinguishable from
-     * one that had genuinely replayed four hundred calls.
+     * Same claim as `agent_runs.replayed_from`, an id in the replay source and for the same
+     * reason not a foreign key — and it matters more here: a replayed shadow run touches no
+     * database at all, so a row that did not say so would be indistinguishable from one that had
+     * genuinely replayed four hundred calls.
      */
-    replayedFrom: integer('replayed_from').references((): AnyPgColumn => shadowRuns.id, { onDelete: 'set null' }),
+    replayedFrom: integer('replayed_from'),
     startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
     finishedAt: timestamp('finished_at', { withTimezone: true }),
   },

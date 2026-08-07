@@ -1,6 +1,7 @@
 .PHONY: up down remount seed seed-checksum traffic traffic-checksum ingest demo-reset map-estate \
         generate-oracles shadow-db shadow-run implement-service adopt-service service-suite \
-        github-token open-pr record-golden replay-check restore-golden reset-procedure \
+        github-token open-pr record-golden replay-check restore-golden load-replay-source \
+        reset-procedure \
         verify-m0 verify-m1 verify-m2 verify-m3 verify-m4 verify-m5 verify-m6 verify-m7
 
 # Waits only for the containers that must exist BEFORE seeding. shop-api's health
@@ -218,6 +219,20 @@ replay-check:
 restore-golden:
 	npm --prefix scripts install --silent
 	npm --prefix scripts run restore-golden
+
+# Build the REPLAY SOURCE: a second Postgres database holding the recorded analysis, which
+# `make demo-reset` cannot reach.
+#
+# This is what makes beat 1 and replay compatible. The recordings ARE the analysis — reset
+# truncates agent_runs and agent_steps with everything else — so recordings kept in the live
+# database could only ever re-show what was already on the screen. Kept somewhere else, the demo
+# can open on an empty estate and still replay every run into it for nothing.
+#
+# Built from the committed snapshot by the same three commands `replay-check` uses. Re-run it
+# after `make record-golden`, and never otherwise: nothing writes to it.
+load-replay-source:
+	npm --prefix scripts install --silent
+	npm --prefix scripts run load-replay-source
 
 # Put ONE procedure back to "nothing analysed yet" and leave the other thirteen alone. This is
 # what makes the lane rehearsable: `demo-reset` is all-or-nothing by design, and re-running a

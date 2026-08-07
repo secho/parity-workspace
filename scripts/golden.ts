@@ -1,4 +1,4 @@
-// `make record-golden` and `make replay-check`.
+// `make record-golden`, `make replay-check`, `make restore-golden` and `make load-replay-source`.
 //
 // The recorded golden run, as a snapshot of Parity's analysis rather than a hand-curated
 // fixture. `docs/SPEC.md` §4 asks for "a recorded golden run in the repo so a fresh clone can
@@ -84,6 +84,31 @@ async function record(): Promise<void> {
 }
 
 /**
+ * Build one database from the committed snapshot: schema from the migrations, data from the dump.
+ *
+ * Shared by `check` and `source`, and that sharing is the point — the database `replay-check`
+ * proves round-trips cleanly is built by exactly the same three commands as the one replay mode
+ * later reads from. A source built a different way would be a different claim.
+ */
+async function build(database: string): Promise<void> {
+  await psql('postgres', `DROP DATABASE IF EXISTS ${database}`);
+  await psql('postgres', `CREATE DATABASE ${database} OWNER parity`);
+
+  // Schema first, from the same migrations the API applies on boot, so the database carries the
+  // real schema rather than one inferred from the dump. Drizzle's statements already end in `;`;
+  // the breakpoint markers are comments to it, so they are simply removed.
+  const migrations = join(ROOT, 'parity/api/drizzle');
+  const feed = (input: string): Promise<unknown> =>
+    exec('bash', [
+      '-c',
+      `${input} | docker compose exec -T parity-postgres psql -U parity -d ${database} -v ON_ERROR_STOP=1 -f - >/dev/null`,
+    ], { cwd: ROOT, maxBuffer: 512 * 1024 * 1024 });
+
+  await feed(`cat ${migrations}/*.sql | grep -v '^--> statement-breakpoint$'`);
+  await feed(`gunzip -c '${SNAPSHOT}'`);
+}
+
+/**
  * Restore into a scratch database and compare, row for row.
  *
  * A scratch database on purpose: this must be provable without putting the live analysis at
@@ -93,24 +118,9 @@ async function check(): Promise<void> {
   const recorded = JSON.parse(await readFile(COUNTS, 'utf8')) as Record<string, number>;
   const scratch = 'parity_replay_check';
 
-  await psql('postgres', `DROP DATABASE IF EXISTS ${scratch}`);
-  await psql('postgres', `CREATE DATABASE ${scratch} OWNER parity`);
-
   let failures = 0;
   try {
-    // Schema first, from the same migrations the API applies on boot, so the scratch database
-    // carries the real schema rather than one inferred from the dump. Drizzle's statements
-    // already end in `;`; the breakpoint markers are comments to it, so they are simply removed.
-    const migrations = join(ROOT, 'parity/api/drizzle');
-    const feed = (source: string): Promise<unknown> =>
-      exec('bash', [
-        '-c',
-        `${source} | docker compose exec -T parity-postgres psql -U parity -d ${scratch} -v ON_ERROR_STOP=1 -f - >/dev/null`,
-      ], { cwd: ROOT, maxBuffer: 512 * 1024 * 1024 });
-
-    await feed(`cat ${migrations}/*.sql | grep -v '^--> statement-breakpoint$'`);
-    await feed(`gunzip -c '${SNAPSHOT}'`);
-
+    await build(scratch);
     const restored = await counts(scratch);
     for (const table of SNAPSHOT_TABLES) {
       const ok = restored[table] === recorded[table];
@@ -178,11 +188,49 @@ async function restore(): Promise<void> {
   if (failures > 0) process.exit(1);
 }
 
+/**
+ * Build the REPLAY SOURCE — the database `PARITY_MODE=replay` reads recordings out of.
+ *
+ * The whole reason it is a separate database is that `make demo-reset` must not be able to touch
+ * it. The recordings ARE the analysis: reset truncates `agent_runs` and `agent_steps`, so a
+ * replay that read from the live database could only ever re-show something already on screen.
+ * Beat 1 wants an empty estate and beats 2–4 want replay, and those two are only compatible if
+ * the recordings live somewhere the reset does not reach.
+ *
+ * Built once, from the committed snapshot, by the same three commands `replay-check` uses. Rebuilt
+ * only when the snapshot changes — `make record-golden && make load-replay-source`.
+ */
+async function source(): Promise<void> {
+  const recorded = JSON.parse(await readFile(COUNTS, 'utf8')) as Record<string, number>;
+  const database = process.env.PARITY_REPLAY_DATABASE ?? 'parity_replay';
+
+  await build(database);
+  const loaded = await counts(database);
+
+  let failures = 0;
+  for (const table of SNAPSHOT_TABLES) {
+    if (loaded[table] !== recorded[table]) {
+      failures += 1;
+      console.log(`  \x1b[31mFAIL\x1b[0m  ${table.padEnd(20)} ${recorded[table]} → ${loaded[table]}`);
+    }
+  }
+
+  const total = Object.values(loaded).reduce((a, b) => a + b, 0);
+  console.log(
+    failures === 0
+      ? `replay source \`${database}\` loaded — ${total.toLocaleString('en-GB')} rows across ${SNAPSHOT_TABLES.length} tables`
+      : `\n${failures} tables did not load`,
+  );
+  console.log('  `make demo-reset` cannot reach it. Rebuild it after `make record-golden`.');
+  if (failures > 0) process.exit(1);
+}
+
 const command = process.argv[2];
 if (command === 'record') await record();
 else if (command === 'check') await check();
 else if (command === 'restore') await restore();
+else if (command === 'source') await source();
 else {
-  console.error('usage: golden.ts record|check|restore');
+  console.error('usage: golden.ts record|check|restore|source');
   process.exit(1);
 }

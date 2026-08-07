@@ -206,7 +206,7 @@ demo-reset → map-estate → verify-m3 → generate-oracles → verify-m4
   → implement-service → adopt-service → shadow-run IMPL=generated → verify-m6
 ```
 
-## M7 — Campaigns, reset, replay — **done**, `make verify-m7` 70/70
+## M7 — Campaigns, reset, replay — **done**, `make verify-m7` 76/76
 
 The milestone that turns the lane from *done once* into *demonstrable*. Jan's ask, in his words:
 start a process that runs triage, spec, oracle, shadow run and decisions **on another procedure**,
@@ -237,6 +237,14 @@ each time.
       cadence, scaled by `PARITY_REPLAY_SPEED`. Measured at speed 10: **30.2 s against a
       recorded 30.1 s**, nine of nine steps identical in order, `cost_usd` NULL, the estate's
       total spend unmoved, and both database fingerprints exactly where they were
+- [x] **Replay works on an estate that has just been reset**, which is the whole point and was
+      nearly missed. The recordings live in a SECOND database, `parity_replay`, built by
+      `make load-replay-source` from the committed snapshot — `resetState` truncates `agent_runs`
+      and `agent_steps` with everything else, so recordings in the live database could only ever
+      re-show what was already on screen. A replayed run also re-materialises **what it produced**:
+      the specification arrives at its full **15 368 characters**, not the 2 000 the transcript
+      carries. Measured from a genuinely blank estate: `Zmapovat estate`, all fourteen procedures,
+      **94 s and $0.00**; the whole migration lane on one procedure, **15 s and $0.00**
 - [x] `make reset-procedure PROC=x [KEEP_SERVICE=1]` — one procedure back to nothing analysed in
       **105 ms**, with every one of the other procedure's row counts identical across all
       fourteen artefact tables
@@ -244,7 +252,7 @@ each time.
       across 20 tables, 3.1 MB gzipped**, with `make record-golden` / `replay-check` /
       `restore-golden` as one mechanism
 
-**Two things came out differently from the plan, and both are better.**
+**Three things came out differently from the plan.**
 
 `sp_GetCartSummary` earned `proven` on its first green run — and should not have. It has no
 hand-written reference implementation, so the condition "every difference the reference run found
@@ -252,13 +260,20 @@ has been decided" quantified over an empty set and passed **vacuously**. `promot
 also requires a succeeded `reference` run, and the procedure sits at `shadow` with the blocker
 `čeká na rozhodnutí`. That is the better demo: a rung the machine declines to climb on its own.
 
+**The replay source is a second database, not `recorded_*` tables.** The plan called for tables
+`resetState` would not touch; the snapshot made them look redundant, and they were dropped. That
+was wrong, and the cost showed up the moment anyone asked to open on a blank estate *and* replay:
+recordings kept in the live database are deleted by the very reset beat 1 depends on. A separate
+database is the same idea with a cleaner seam — nothing writes to it, `demo-reset` cannot reach it,
+and it is built from the artefact already in the repository.
+
 **`make demo-reset` still does not close the PR or delete its remote branch**, and that is now
 deliberate rather than deferred. Everything else the reset touches is inside Postgres and comes
 back from the snapshot in two seconds; a remote branch is outside it. The `pull_requests` row
 stores the branch and the number so it remains possible — it is one `gh` call away — but it is
 the one act in this platform that reaches outward, and reset is the wrong place for it.
 
-`make verify-m7` — 70 checks in nine sections. It **spends nothing**: the reset and the
+`make verify-m7` — 76 checks in ten sections. It **spends nothing**: the reset and the
 per-procedure reset are exercised by running the real code inside transactions that are rolled
 back, campaigns by running the one campaign that makes no model call, replay by replaying — and
 the gate asserts the estate's total spend did not move and that both replays were removed again,
@@ -267,8 +282,12 @@ so it leaves the database exactly as it found it.
 ```
 verify-m6 → implement-service PROC=sp_GetCartSummary → adopt-service PROC=sp_GetCartSummary
   → service-suite PROC=sp_GetCartSummary TARGET=service
-  → shadow-run PROC=sp_GetCartSummary "" generated → record-golden → verify-m7
+  → shadow-run PROC=sp_GetCartSummary "" generated
+  → record-golden → load-replay-source → verify-m7
 ```
+
+`make load-replay-source` after every `make record-golden`. The gate's §10 resets the estate for
+real and replays into it, so a stale source is caught there rather than on stage.
 
 The 120-second full reset is measured by hand rather than by the gate: `make demo-reset &&
 make restore-golden`, which is a reset plus a 3.1 MB restore. Putting it inside the gate would

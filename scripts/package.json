@@ -15,7 +15,8 @@
     "adopt-service": "tsx adopt-service.ts",
     "record-golden": "tsx golden.ts record",
     "replay-check": "tsx golden.ts check",
-    "restore-golden": "tsx golden.ts restore"
+    "restore-golden": "tsx golden.ts restore",
+    "load-replay-source": "tsx golden.ts source"
   },
   "dependencies": {
     "mssql": "^11.0.1",

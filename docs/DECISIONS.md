@@ -1440,3 +1440,43 @@ It used to show only when it was not `live`. That makes the most likely on-stage
 running a stretch in the wrong mode — invisible in exactly one direction: a replayed beat
 announced itself, and a beat that was meant to be replayed and quietly went live did not.
 `LIVE` is grey, `REPLAY` is amber and boxed, and both are always on screen.
+
+## 2026-08-06 · The replay source is a second database, and the earlier decision was wrong
+Two entries above, replay was recorded as reading recordings out of the live tables, on the
+grounds that `make restore-golden` puts them back after a reset. That holds right up to the
+question anyone actually asks: *can beat 1 open on an empty estate and beats 2–4 still be
+replayed?* No — the recordings ARE the analysis, `resetState` truncates `agent_runs` and
+`agent_steps` with everything else, and a replay reading from the live database can therefore only
+ever re-show what is already on screen. The plan's original `recorded_*` tables existed for exactly
+this and should not have been dropped.
+
+They come back as `parity_replay`, a second database built by `make load-replay-source` from the
+committed snapshot — the same three commands `replay-check` uses, so the database replay reads from
+is built identically to the one the round-trip is proven against. Nothing writes to it. It is
+opened lazily, so a stack running `PARITY_MODE=live` never needs it to exist.
+
+Measured from a genuinely blank estate: the whole `Zmapovat estate` campaign replays in 94 s for
+$0.00, and the migration lane on one procedure in 15 s. Live those are an hour and $9, and five
+minutes per procedure.
+
+## 2026-08-06 · A replayed run re-materialises what it produced, not just its transcript
+The obvious shape of replay re-emits steps. That gives you a step stream and an empty Specifikace
+tab, because `runner.ts` truncates every tool input to 2 000 characters — the `write_spec` step in
+a recording carries 2 000 characters of a specification that is 15 368 long. So each skill declares
+what it writes and a replayed run copies exactly that for exactly that procedure: the spec, the
+golden cases and invariants, the service artefacts, and triage's classification. `verify-m7` §10
+compares the materialised specification to the recorded one **byte for byte** from a reset
+database, because a length check would pass on the truncated copy the transcript really does carry.
+
+Three rules hold it together. Identity across the two databases is **by name**, never by id, since
+`demo-reset` re-ingests and assigns fresh ids. `agent_run_id` on a copied artefact points at the
+**replay**, not at the recording — the recorded run does not exist in the live database and the row
+is genuinely the output of the run now on screen. And nothing copied moves the ladder:
+`oracle_state` is still promoted by `promoteAfterOracle` and `promoteAfterShadow` from executions
+that really happen, because recording a baseline runs the procedure and that costs nothing.
+
+## 2026-08-06 · `replayed_from` is not a foreign key
+It holds an id from the replay source. A foreign key cannot express a cross-database reference, and
+the constraint that existed while the two were one database was dropped at M7 rather than kept as
+something that happened to hold. The first replay after the source moved failed on it immediately,
+which is the good version of finding out.

@@ -43,6 +43,13 @@
       "when": 1786044420599,
       "tag": "0005_puzzling_zaladane",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1786082262692,
+      "tag": "0006_striped_lockjaw",
+      "breakpoints": true
     }
   ]
 }

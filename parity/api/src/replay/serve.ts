@@ -6,6 +6,8 @@ import type { Config } from '../env.js';
 import type { RunHandle, StartRun, StepListener } from '../agent/runner.js';
 import type { Finding } from '../shadow/diff.js';
 import type { ShadowImplementation, ShadowOptions, ShadowResult } from '../shadow/run.js';
+import { materialiseArtefacts } from './materialise.js';
+import { procedureIdByName, replaySource } from './source.js';
 import { findRecording, playRecording, replaySpeed } from './stream.js';
 
 /**
@@ -24,9 +26,16 @@ import { findRecording, playRecording, replaySpeed } from './stream.js';
  * table is the interface. So the rows are written as the replay proceeds, and the event goes out
  * after the insert.
  *
- * What replay is NOT: a way to demo an analysis that does not exist. It re-materialises runs
- * from the recordings in this database — `make restore-golden` is what puts those recordings
- * back after a reset, and the artefacts they produced come back with them, in the same restore.
+ * The recordings come from a SECOND database (`./source.ts`), which `make demo-reset` cannot
+ * reach. That is what makes beat 1's empty estate and a replayed beat 2 compatible: the reset
+ * truncates `agent_runs` and `agent_steps` along with everything else, so recordings kept in the
+ * live database could only ever re-show what was already on the screen.
+ *
+ * And a run does not only emit steps — it **produced** something. The spec, the golden cases, the
+ * service. Those are copied from the source as the run finishes (`./materialise.ts`), because
+ * `runner.ts` truncates every tool input to 2 000 characters and the payload was never in the
+ * transcript to begin with.
+ *
  * A replay whose recording is missing throws rather than emitting nothing, because a silent
  * empty replay is indistinguishable from a model that returned nothing, which is precisely the
  * failure a replay must not be able to have.
@@ -57,22 +66,19 @@ export async function replayAgentRun(
     throw new Error(`replay mode: ${request.skillName} has no procedure, so there is nothing to look a recording up by`);
   }
 
-  const recording = await findRecording(db, {
+  const source = await replaySource(config);
+  const recording = await findRecording(source, {
     skill: request.skillName,
     procedureName: request.procedureName,
   });
   if (recording === null) {
     throw new Error(
-      `replay mode: no recorded ${request.skillName} run for ${request.procedureName}. ` +
-        'Restore the recorded analysis with `make restore-golden`, or run live. ' +
-        'A replay of nothing is not a replay.',
+      `replay mode: no recorded ${request.skillName} run for ${request.procedureName} in the ` +
+        'replay source. Run `make load-replay-source`, or run live. A replay of nothing is not a replay.',
     );
   }
 
-  const [procedure] = await db
-    .select({ id: procedures.id })
-    .from(procedures)
-    .where(eq(procedures.name, request.procedureName));
+  const procedureId = await procedureIdByName(db, request.procedureName);
 
   const runId = randomUUID();
   const started = Date.now();
@@ -82,7 +88,7 @@ export async function replayAgentRun(
       runId,
       skill: recording.skill,
       taskClass: request.taskClass,
-      procedureId: procedure?.id ?? null,
+      procedureId,
       status: 'running',
       provider: recording.provider,
       prompt: request.prompt,
@@ -93,6 +99,15 @@ export async function replayAgentRun(
   await playRecording(recording, async (step) => {
     await db.insert(agentSteps).values({ agentRunId: run.id, ...step });
     onStep?.(step);
+  });
+
+  // What the run PRODUCED, not just what it said. Written after the last step and before the run
+  // is marked succeeded, so a screen refreshing on that final event finds the artefact already
+  // there rather than a run that finished and left nothing behind.
+  const materialised = await materialiseArtefacts(db, source, {
+    skill: recording.skill,
+    procedureName: request.procedureName,
+    agentRunId: run.id,
   });
 
   await db
@@ -110,6 +125,7 @@ export async function replayAgentRun(
   return {
     runId,
     agentRunId: run.id,
+    materialised: materialised.rows,
     result: {
       model: recording.model,
       // Empty, and honestly so: no SDK session was created, so no skill was loaded into one.
@@ -156,12 +172,18 @@ export async function replayShadowRun(db: Db, config: Config, options: ShadowOpt
   const [procedure] = await db.select().from(procedures).where(eq(procedures.name, options.procedureName));
   if (procedure === undefined) throw new Error(`no procedure named ${options.procedureName} in the estate`);
 
-  const [recorded] = await db
+  const source = await replaySource(config);
+  const sourceProcedureId = await procedureIdByName(source, options.procedureName);
+  if (sourceProcedureId === null) {
+    throw new Error(`replay mode: the replay source has no procedure named ${options.procedureName}`);
+  }
+
+  const [recorded] = await source
     .select()
     .from(shadowRuns)
     .where(
       and(
-        eq(shadowRuns.procedureId, procedure.id),
+        eq(shadowRuns.procedureId, sourceProcedureId),
         eq(shadowRuns.kind, kind),
         eq(shadowRuns.implementationId, kind === 'aa' ? 'aa' : implementationId),
         eq(shadowRuns.status, 'succeeded'),
@@ -173,9 +195,8 @@ export async function replayShadowRun(db: Db, config: Config, options: ShadowOpt
 
   if (recorded === undefined) {
     throw new Error(
-      `replay mode: no recorded ${implementationId} shadow run for ${options.procedureName}. ` +
-        'Restore the recorded analysis with `make restore-golden`, or run live. ' +
-        'A replay of nothing is not a replay.',
+      `replay mode: no recorded ${implementationId} shadow run for ${options.procedureName} in ` +
+        'the replay source. Run `make load-replay-source`, or run live. A replay of nothing is not a replay.',
     );
   }
 
@@ -218,29 +239,33 @@ export async function replayShadowRun(db: Db, config: Config, options: ShadowOpt
     // Cases first, in sequence order, so the recorded id can be mapped onto the new one. The
     // diffs key on `shadow_case_id`, and a diff pointing at the recording's case rather than
     // this run's would show the right value attached to the wrong replay.
-    const recordedCases = await db
+    const recordedCases = await source
       .select()
       .from(shadowCases)
       .where(eq(shadowCases.shadowRunId, recorded.id))
       .orderBy(asc(shadowCases.seq));
 
     const caseIdMap = new Map<number, number>();
-    for (const source of recordedCases) {
-      const { id: _id, shadowRunId: _runId, ...rest } = source;
+    for (const recordedCase of recordedCases) {
+      const { id: _id, shadowRunId: _runId, ...rest } = recordedCase;
       const [copy] = await db
         .insert(shadowCases)
         .values({ ...rest, shadowRunId: run.id })
         .returning({ id: shadowCases.id });
-      caseIdMap.set(source.id, copy.id);
+      caseIdMap.set(recordedCase.id, copy.id);
     }
 
-    const recordedDiffs = await db.select().from(diffs).where(eq(diffs.shadowRunId, recorded.id)).orderBy(asc(diffs.id));
+    const recordedDiffs = await source.select().from(diffs).where(eq(diffs.shadowRunId, recorded.id)).orderBy(asc(diffs.id));
     if (recordedDiffs.length > 0) {
-      const rows = recordedDiffs.map((source) => {
-        const { id: _id, shadowRunId: _runId, shadowCaseId, ...rest } = source;
+      const rows = recordedDiffs.map((row) => {
+        const { id: _id, shadowRunId: _runId, shadowCaseId, agentRunId: _a, ...rest } = row;
         const mapped = caseIdMap.get(shadowCaseId);
-        if (mapped === undefined) throw new Error(`recorded diff ${source.id} cites case ${shadowCaseId}, which is not in the run`);
-        return { ...rest, shadowRunId: run.id, shadowCaseId: mapped };
+        if (mapped === undefined) throw new Error(`recorded diff ${row.id} cites case ${shadowCaseId}, which is not in the run`);
+        // `agent_run_id` is dropped rather than carried: it names a `classify-diff` run in the
+        // SOURCE database, and a foreign key pointing at a row that does not exist here would
+        // fail the insert. The verdict and its Czech explanation survive, which is what the queue
+        // shows; `verdict_source` still says the model decided it.
+        return { ...rest, shadowRunId: run.id, shadowCaseId: mapped, agentRunId: null };
       });
       // In chunks: one 400-case run carries well over a thousand differences, and Postgres
       // takes 65 535 bind parameters per statement — sixteen columns each puts the ceiling

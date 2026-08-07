@@ -655,7 +655,71 @@ async function main(): Promise<void> {
     ]);
     check(secondQuotes.length === 0, `and ${SECOND}'s numbers likewise`, secondQuotes.join(' · '));
     note('this is the check for the stale-doc failure this build has already had twice');
+
+    // --- 10 · Beat 1 and replay are compatible ---------------------------------
+    //
+    // The only destructive section, and the only one that has to be: it runs `demo-reset` for
+    // real and then replays into the emptied database. Restored in the `finally` below, which is
+    // also the only thing in this gate that exercises `make restore-golden` end to end.
+    section('10 · An empty estate can still be replayed into');
+
+    const fromBlank = await probe('src/cli/probe-replay-reset.ts', [MIGRATED], 900_000, { PARITY_MODE: 'replay', PARITY_REPLAY_SPEED: '40' });
+    const emptied = fromBlank.afterReset as { procedures: number; agentRuns: number; specs: number };
+    check(
+      emptied.procedures === 14 && emptied.agentRuns === 0 && emptied.specs === 0,
+      'a reset empties the analysis and leaves the estate',
+      `${emptied.procedures} procedures, ${emptied.agentRuns} runs, ${emptied.specs} specs`,
+    );
+    note('beat 1 opens on this: fourteen procedures, coverage zero, nothing analysed');
+
+    const replayed = fromBlank.replay as { elapsedMs: number; specReplayedFrom: number | null };
+    check(
+      replayed.specReplayedFrom !== null,
+      'and a run replays into it anyway — the recordings are in a database the reset cannot reach',
+      `replayed_from ${replayed.specReplayedFrom} in ${new URL(process.env.PARITY_REPLAY_PG_URL ?? 'postgres://x/parity_replay').pathname.slice(1)}`,
+    );
+
+    const specCheck = fromBlank.spec as { recordedChars: number; liveChars: number; identical: boolean; agentRunId: number | null; replayedRunId: number };
+    check(
+      specCheck.identical && specCheck.liveChars > 2000,
+      'the specification it produced is byte-identical to the recorded one',
+      `${specCheck.liveChars} of ${specCheck.recordedChars} characters`,
+    );
+    note('2 000 would mean it had been rebuilt from the transcript — runner.ts truncates tool inputs there');
+    check(
+      specCheck.agentRunId === specCheck.replayedRunId,
+      'and it is attributed to the run whose steps are on screen',
+      `spec.agent_run_id ${specCheck.agentRunId} vs run ${specCheck.replayedRunId}`,
+    );
+
+    const classification = fromBlank.classification as { recorded: string | null; live: string | null; campaignStatus: string };
+    check(
+      classification.live === classification.recorded && classification.campaignStatus === 'specced',
+      'the classification came back too, so the blocker table moves',
+      `${classification.live} · ${classification.campaignStatus}`,
+    );
+
+    // Against the post-reset baseline, not the pre-reset one: the truncate took the whole cost
+    // history with it, so the only comparison that answers "did the replay spend anything" is the
+    // one on the far side of it.
+    const resetSpend = fromBlank.spend as { atBlank: number; afterReplay: number };
+    check(
+      resetSpend.afterReplay === resetSpend.atBlank && resetSpend.atBlank === 0,
+      'and none of it cost anything',
+      `$${resetSpend.atBlank.toFixed(2)} → $${resetSpend.afterReplay.toFixed(2)}`,
+    );
   } finally {
+    // The estate is left reset by section 10, deliberately — a probe that restored its own damage
+    // would be asserting the restore works by using the restore. Doing it here means a gate that
+    // dies mid-section still puts the analysis back.
+    await exec('npm', ['--prefix', 'scripts', 'run', 'restore-golden'], {
+      cwd: ROOT,
+      maxBuffer: 32 * 1024 * 1024,
+      timeout: 600_000,
+    }).catch((err: { stdout?: string }) => {
+      console.error(`\nRESTORE FAILED — run \`make restore-golden\` by hand: ${err.stdout ?? ''}`);
+    });
+
     await sa.close();
     await client.end();
   }

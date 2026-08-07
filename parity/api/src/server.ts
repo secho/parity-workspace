@@ -3,6 +3,7 @@ import { seedPolicy } from './agent/policy.js';
 import { openStore, waitForPostgres } from './db/client.js';
 import { applyMigrations } from './db/migrate.js';
 import { agentReadiness, loadConfig } from './env.js';
+import { closeReplaySource } from './replay/source.js';
 import { agentRoutes } from './routes/agent.js';
 import { campaignRoutes } from './routes/campaigns.js';
 import { estateRoutes } from './routes/estate.js';
@@ -40,6 +41,10 @@ await app.listen({ host: '0.0.0.0', port: config.port });
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.once(signal, () => {
-    void app.close().then(() => store.close()).then(() => process.exit(0));
+    void app
+      .close()
+      .then(() => closeReplaySource())
+      .then(() => store.close())
+      .then(() => process.exit(0));
   });
 }

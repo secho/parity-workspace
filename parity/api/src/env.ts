@@ -74,6 +74,16 @@ export interface Config {
   agentWorkspace: string;
   /** live | replay. Replay is M7; the flag is read here so the UI can say which it is. */
   mode: string;
+  /**
+   * Where `PARITY_MODE=replay` reads its recordings from.
+   *
+   * A SECOND database, and that is the whole design. The recordings ARE the analysis —
+   * `resetState()` truncates `agent_runs` and `agent_steps` with everything else — so a replay
+   * that read from `pgUrl` could only ever re-show what was already on screen. Beat 1 wants an
+   * empty estate and beats 2-4 want replay; those are compatible only if the recordings are
+   * somewhere `make demo-reset` cannot reach. Built by `make load-replay-source`, never written to.
+   */
+  replayPgUrl: string;
 }
 
 /**
@@ -181,5 +191,6 @@ export function loadConfig(): Config {
     skillsDir: process.env.PARITY_SKILLS_DIR ?? '/app/skills',
     agentWorkspace: process.env.PARITY_AGENT_WORKSPACE ?? '/tmp/parity-agent',
     mode: process.env.PARITY_MODE ?? 'live',
+    replayPgUrl: process.env.PARITY_REPLAY_PG_URL ?? 'postgres://parity:parity@localhost:5433/parity_replay',
   };
 }
