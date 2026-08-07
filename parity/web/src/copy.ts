@@ -10,6 +10,9 @@ export const cs = {
     campaigns: 'Kampaně',
     queue: 'Fronta',
     ops: 'Provoz',
+    // Pod čárou, potichu. Není to pátá obrazovka platformy — je to ovládání dema.
+    rezie: 'Režie',
+    rezieHint: 'Průchod demem beat po beatu. Není součástí produktu, je to jevištní technika.',
   },
 
   estate: {
@@ -174,9 +177,10 @@ export const cs = {
     } as Record<string, string>,
   },
 
-  // Režie — the presenter's page. Not in the sidebar: every other screen is something a customer
-  // is meant to look at, and a nav item called `Režie` announces that the demo is choreographed
-  // before the first beat has landed.
+  // Režie — the presenter's page. Reachable from the sidebar, but below the rule and in
+  // `--text-faint` at 10px: the four above it are what a customer is meant to look at, and a fifth
+  // item in the same weight announces that the demo is choreographed before the first beat lands.
+  // Findable by someone looking for it, unreadable from the fifth row.
   rezie: {
     title: 'Režie',
     subtitle: (done: number, total: number) => `${done} z ${total} beatů hotových`,

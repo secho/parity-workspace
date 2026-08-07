@@ -52,9 +52,11 @@ mode is an hour and $9 rather than 94 seconds.
 and what the estate says about it right now. Every button posts to the endpoint the `make` target
 already used; nothing there is a second implementation of this file.
 
-It is **deliberately not in the sidebar.** Every other screen is something the customer is meant to
-look at, and a nav item reading *Režie* announces that what they are watching is choreographed
-before the first beat lands. Keep it on a second screen or a second window.
+It is in the sidebar, but **below the rule and deliberately quiet** — 10px, `--text-faint`, under
+a divider. The four items above it are what the customer is meant to look at, and a fifth in the
+same weight announces that what they are watching is choreographed before the first beat lands.
+Findable when you look for it, unreadable from the fifth row. Keep it on a second screen anyway if
+you can.
 
 `hotovo` is derived from the database on every read, so it is a live "you are here" rather than a
 checklist — reload mid-demo, or hand the laptop to someone else, and it still knows. It also

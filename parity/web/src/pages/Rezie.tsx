@@ -6,11 +6,12 @@ import { fetchDemo, runBeat, type DemoBeat, type DemoState } from '../lib/api';
 /**
  * Režie — the presenter's remote control for `docs/DEMO-SCRIPT.md`.
  *
- * **Deliberately not in the sidebar.** Every other screen is something a customer is meant to
- * look at; this one is stage machinery, and a nav item reading "Režie" next to Estate would tell
- * the room that what they are watching is choreographed before the first beat lands. It is not
- * hidden — it is at `/rezie`, it is in the demo script, and the presenter keeps it on a second
- * screen. Absent from the navigation, present in the product.
+ * **In the sidebar, but below the rule and deliberately quiet.** The four above it are what a
+ * customer is meant to look at; this one is stage machinery, and a fifth item in the same weight
+ * would tell the room that what they are watching is choreographed before the first beat lands.
+ * Set in `--text-faint` at 10px under a divider it is findable by someone looking for it and
+ * unreadable from the fifth row — which is the balance between "the presenter can get to it" and
+ * "the audience never reads it".
  *
  * Every button posts to an endpoint that already existed and that a `make` target already used.
  * Nothing here is a second implementation of the demo; if this page and the script disagreed,

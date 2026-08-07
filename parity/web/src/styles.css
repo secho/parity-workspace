@@ -813,3 +813,21 @@ pre.source {
   font-size: 11px;
   line-height: 1.6;
 }
+
+/* Backstage: the presenter's link, below the rule and deliberately quiet. Findable when you look
+   for it, unreadable from the back of the room. */
+.nav-backstage {
+  margin-top: auto;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.nav-backstage a {
+  font-size: 10px;
+  color: var(--text-faint);
+  letter-spacing: 0.04em;
+}
+
+.nav-backstage a:hover {
+  color: var(--text-dim);
+}

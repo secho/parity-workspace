@@ -1517,11 +1517,13 @@ What did not exist was one surface that runs them in order and says which have h
 cost of that was a terminal on screen during a customer demo and a presenter remembering what
 comes next.
 
-It is absent from the navigation on purpose. `Estate · Kampaně · Fronta · Provoz` is what a
-customer is meant to look at; a fifth item reading *Režie* tells the room that what they are
-watching is choreographed before the first beat lands. Absent from the navigation, present in the
-product — it is at a URL, it is in the demo script, and the presenter keeps it on a second screen.
-Not hidden functionality: unlisted stage machinery.
+It was absent from the navigation at first, on the reasoning that `Estate · Kampaně · Fronta ·
+Provoz` is what a customer is meant to look at and a fifth item reading *Režie* tells the room the
+demo is choreographed before the first beat lands. That reasoning still holds, but it made the
+page unfindable — the first question after it shipped was "kde jsou ta tlačítka". So it is in the
+sidebar, below a divider, at 10px in `--text-faint`: findable by someone looking for it,
+unreadable from the fifth row. The taste argument was right and the discoverability cost was
+mine to have noticed.
 
 Two rules it inherits rather than invents. **Every button posts to the endpoint that already
 existed**, with the body the `make` target already passed, so the page is a remote control and not
