@@ -69,12 +69,14 @@ make open-pr PROC=deletion COMMIT=--commit
 It is idempotent — [PR #11](https://github.com/secho/parity-workspace/pull/11) is already open, so
 a rehearsal returns that one rather than opening a second. Have it in a second tab.
 
-**Then `Zmapovat estate`, and say the honest thing about the timing.** A full mapping is 28 model
-runs and about $7 — that is not a two-minute beat and never will be. Start it, watch three or
-four items land, and move on.
+**Then `Zmapovat estate`, and say the honest thing about the timing.** Measured on this estate:
+**one procedure is triage + spec, and it takes five minutes and about $0,65.** Fourteen of them
+is over an hour and roughly $9. You will see the first item go `běží` and the other thirteen
+sitting at `čeká` — **you will not see one complete**, so do not promise the room that they will.
+That is the beat: it starts, it is visibly real, and it is visibly not something you wait for.
 
-> "Tohle poběží ještě osm minut. Nechám to běžet a ukážu vám výsledek, který platforma vyrobila
-> včera — je to ta samá kampaň, jen dokončená."
+> "Jedna procedura je pět minut přemýšlení. Těch čtrnáct je hodina a nikdo tady nemá hodinu.
+> Nechám to běžet a ukážu vám ten samý výsledek dokončený — platforma ho vyrobila včera."
 
 ## Beat 2½ — the recorded run (15 s, said out loud)
 
@@ -90,9 +92,23 @@ it is what `docs/SPEC.md` §4 asks for by name.
 > estate, uložený v repozitáři. Za chvíli si ho přehrajeme krok po kroku."
 
 The mapping campaign from beat 2 notices its run is gone and stops itself rather than carrying on
-spending against an estate that has been replaced underneath it. **Switch `PARITY_MODE` to
-`replay` now** — the badge turns amber, and it is the last time in the demo you have to think
-about it.
+spending against an estate that has been replaced underneath it. Rehearsed: it leaves no residue —
+`agent_runs` comes back to exactly the recorded count.
+
+**Switch `PARITY_MODE` to `replay` now.** It is a container restart and takes two seconds:
+
+```
+PARITY_MODE=replay PARITY_REPLAY_SPEED=8 docker compose up -d parity-api
+```
+
+The badge turns amber, and it is the last time in the demo you have to think about it.
+
+Then re-fill the decision queue, which beat 4 needs and which is **free and instant in replay
+mode** — three seconds, no model call, the same four findings with the same Czech reasoning:
+
+```
+make shadow-run PROC=sp_CalculateOrderTotal "" reference
+```
 
 ## Beat 3 — One procedure, end to end (4 min)
 
@@ -194,11 +210,31 @@ Run in this order. The first three are the ones that have actually gone wrong.
 behind. Both are fine; both want a `make restore-golden` afterwards. `make verify-m7` is the only
 one that leaves the database exactly as it found it.
 
-**If you skip beat 3's live shadow run, the decision queue will be empty.** It shows the newest
-run per procedure, and the newest one is the green generated run with no findings. `make
-shadow-run PROC=sp_CalculateOrderTotal "" reference` re-fills it — and note that doing so makes
-`verify-m6` red on "every finding has been decided" until beat 4's click happens, which is the
-gate being right rather than broken.
+**The decision queue is empty until a reference run re-fills it.** It shows the newest run per
+procedure, and after a restore the newest one is the green generated run with no findings. Beat 2½
+already re-fills it; if you are jumping straight to beat 4, run it yourself:
+
+```
+make shadow-run PROC=sp_CalculateOrderTotal "" reference
+```
+
+In replay mode that is three seconds and free. Live it is 16 s plus four `classify-diff` runs.
+Either way it makes `verify-m6` red on "every finding has been decided" until beat 4's click
+happens — the gate being right, not broken.
+
+## Measured on this stack, so you can budget
+
+| Step | Time | Cost |
+|---|---|---|
+| `make demo-reset` | 0,4 s | — |
+| `Smazat mrtvé procedury`, from cold | 15 ms | — |
+| `make open-pr PROC=deletion COMMIT=--commit` | ~2 s | — |
+| `Zmapovat estate`, per procedure | **5 min** | **$0,65** |
+| `make restore-golden` | 2 s | — |
+| Mode switch | 2 s | — |
+| Reference shadow run, replayed | 3 s | — |
+| Beat 3 spec, replayed at speed 8 | 38 s | — |
+| `Zmapovat estate` on a mapped estate | 266 ms, 14 skipped | — |
 
 **Never quote a memorised number.** Invocation counts drift between the committed checksum, Postgres
 and MS SQL as the gate tags its own calls; whatever the demo says must come off the screen on the day.
