@@ -1536,6 +1536,24 @@ Building it exposed two gaps worth naming: the shadow-run route could not select
 implementation, so beat 4's green run needed a shell, and the deletion PR had no route at all
 because it belongs to three procedures rather than one.
 
+## 2026-08-07 · The runtime mode is persisted, and the commands announce it
+The switch started as an in-memory override on the grounds that the environment should stay the
+source of truth. That was wrong twice in one afternoon. The container runs `tsx watch`, so any
+source edit restarts the API process and the mode reverted to `PARITY_MODE` **silently** — the next
+campaign ran live, at five minutes and $0,65 per procedure, on a stack whose badge had read REPLAY
+a moment earlier. And `make shadow-run` read the environment directly while the UI said replay,
+which cost $0,71 of `classify-diff` nobody asked for.
+
+So it lives in `runtime_settings`, one row, treated like `policy_rules`: configuration, not state.
+`resetState()` does not clear it, the snapshot does not carry it, and `verify-m7` excludes it from
+the "everything a reset empties" check by name. Every command that can spend loads it and then
+says which mode it is in before doing anything. A probe that forces a mode still wins, because it
+builds its own `Config` and never calls `loadMode` — so the gates stay immune to whatever the
+running app is set to, which was the property worth protecting in the first place.
+
+A setting worth putting a switch on is a setting worth surviving a restart. The original entry
+below is kept because its three conditions still hold; only the second one changed.
+
 ## 2026-08-06 · `PARITY_MODE` is switchable at runtime, from `/rezie`
 The flag started as an environment variable, and for a gate that is right. For a stage it is not:
 the demo is entirely replayed — live, mapping the estate is an hour and about $9 — so the single

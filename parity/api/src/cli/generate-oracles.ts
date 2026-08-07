@@ -23,6 +23,7 @@ import { executeRun, oracleRun } from '../agent/runner.js';
 import { procedures } from '../db/schema.js';
 import { recordBaseline, runSuite } from '../oracle/suite.js';
 import { agentReadiness, loadConfig } from '../env.js';
+import { announceMode, loadMode } from '../replay/mode.js';
 
 const config = loadConfig();
 
@@ -36,6 +37,8 @@ if (!readiness.ready) {
 const store = openStore(config.pgUrl);
 await waitForPostgres(store.pool);
 await applyMigrations(store.db);
+await loadMode(store.db);
+announceMode(config);
 await seedPolicy(store.db);
 
 /**

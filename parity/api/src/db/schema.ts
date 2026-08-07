@@ -723,6 +723,25 @@ export const campaignRuns = pgTable(
   (t) => [index('ix_campaign_runs_campaign').on(t.campaign)],
 );
 
+/**
+ * Settings a person changed at runtime, and which must survive the process changing its mind.
+ *
+ * One row per key, and today there is exactly one thing in it: which mode the platform is in.
+ * That started as an in-memory override and it was wrong twice in one afternoon — the container
+ * runs `tsx watch`, so any source edit restarts the process, and the mode reverted to
+ * `PARITY_MODE` **silently**. The next campaign then ran live: five minutes and $0,65 per
+ * procedure, on a stack whose badge had said REPLAY a moment earlier.
+ *
+ * Configuration, not state, and treated like `policy_rules` accordingly: `resetState()` does not
+ * clear it, the golden snapshot does not carry it, and `verify-m7` excludes it from the
+ * "everything a reset empties" check by name.
+ */
+export const runtimeSettings = pgTable('runtime_settings', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const proceduresRelations = relations(procedures, ({ many }) => ({
   columns: many(procedureColumns),
 }));
@@ -752,3 +771,4 @@ export type Decision = typeof decisions.$inferSelect;
 export type ServiceArtifact = typeof serviceArtifacts.$inferSelect;
 export type PullRequest = typeof pullRequests.$inferSelect;
 export type CampaignRun = typeof campaignRuns.$inferSelect;
+export type RuntimeSetting = typeof runtimeSettings.$inferSelect;

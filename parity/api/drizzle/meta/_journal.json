@@ -50,6 +50,13 @@
       "when": 1786082262692,
       "tag": "0006_striped_lockjaw",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1786095870754,
+      "tag": "0007_overconfident_vargas",
+      "breakpoints": true
     }
   ]
 }

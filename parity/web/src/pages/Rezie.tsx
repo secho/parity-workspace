@@ -181,7 +181,7 @@ export function Rezie(): JSX.Element {
           <>
             <span className="mode-label">{cs.rezie.speed}</span>
             <div className="mode-toggle" title={cs.rezie.speedHint}>
-              {[1, 8, 40].map((speed) => (
+              {[1, 8, 40, 100].map((speed) => (
                 <button
                   key={speed}
                   type="button"

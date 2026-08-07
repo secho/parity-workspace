@@ -8,6 +8,7 @@ import { openStore, waitForPostgres } from '../db/client.js';
 import { applyMigrations } from '../db/migrate.js';
 import { seedPolicy } from '../agent/policy.js';
 import { agentReadiness, loadConfig } from '../env.js';
+import { announceMode, loadMode } from '../replay/mode.js';
 import { runShadow } from '../shadow/run.js';
 import { classifyRun } from '../shadow/classify.js';
 
@@ -51,6 +52,8 @@ const implementation = rawImpl;
 const store = openStore(config.pgUrl);
 await waitForPostgres(store.pool);
 await applyMigrations(store.db);
+await loadMode(store.db);
+announceMode(config);
 await seedPolicy(store.db);
 
 const result = await runShadow(store.db, config, {

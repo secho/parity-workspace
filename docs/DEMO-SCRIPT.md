@@ -30,7 +30,7 @@ Measured on this stack:
 |---|---|---|
 | Beat 1 — Estate | live | `make demo-reset`, 0,4 s |
 | Beat 2 — `Smazat mrtvé procedury` | live | 15 ms, no model call at all |
-| Beat 2 — `Zmapovat estate` | **replay** | **94 s for all fourteen, $0,00** at `PARITY_REPLAY_SPEED=40` |
+| Beat 2 — `Zmapovat estate` | **replay** | **39 s for all fourteen at ×100**, 94 s at ×40, $0,00 either way |
 | Beat 3 — spec | **replay** | 38 s at speed 8; 9 s at speed 40 |
 | Beat 3/4 — the whole lane as a campaign | **replay** | **15 s, $0,00** |
 | Beat 3 — oracle (model replayed, baseline executed for real) | **replay** | 8 s, $0,00 |
@@ -59,13 +59,23 @@ Findable when you look for it, unreadable from the fifth row. Keep it on a secon
 you can.
 
 **The mode switch is at the top of that page.** `REŽIM live | replay`, and in replay a
-`ZRYCHLENÍ ×1 | ×8 | ×40`. It takes effect immediately — no container restart — and everything
-that decides reads the same value, so the badge in the corner cannot say `LIVE` while runs are
-being replayed. It does **not** survive a restart: after one, `PARITY_MODE` wins again. If you want
-replay to be the default, put `PARITY_MODE=replay` in `.env`.
+`ZRYCHLENÍ ×1 | ×8 | ×40 | ×100`. It takes effect immediately, no restart, and it is **written
+down** — it survives a restart, and `make` commands follow it too. Everything that decides reads
+the same value, so the badge in the corner cannot say `LIVE` while runs are being replayed.
+
+Speeds worth knowing: **×40** is watchable — items land one at a time and the room can follow.
+**×100** is 39 s for the whole estate, which is the one to use when you are behind. ×1 is the
+honest one: the replay takes exactly as long as the run did.
 
 Switching to replay checks the replay source first and refuses with the fix if it is missing, which
 is the right moment to find that out rather than four beats later.
+
+**Beats 3 and 4 barely move with the speed**, because most of what they do is real: recording the
+oracle baseline executes the procedure against the estate, and copying a shadow run's four hundred
+cases is database work. Fifteen to twenty-five seconds either way, and none of it costs anything.
+
+Every command that can spend now says which mode it is in before it does anything:
+`mode: REPLAY ×100 — served from the recordings, nothing will be spent`, or the loud version.
 
 `hotovo` is derived from the database on every read, so it is a live "you are here" rather than a
 checklist — reload mid-demo, or hand the laptop to someone else, and it still knows. It also
@@ -244,8 +254,8 @@ Run in this order. The first three are the ones that have actually gone wrong.
       `make record-golden`
 - [ ] `make replay-check` — proves that snapshot restores, in a scratch database, before you depend
       on it in front of anyone
-- [ ] Set **replay** on `/rezie` — the switch at the top, `×40`. Or start the stack that way, so a
-      restart cannot surprise you: `PARITY_MODE=replay PARITY_REPLAY_SPEED=40 docker compose up -d parity-api`
+- [ ] Set **replay** on `/rezie` — the switch at the top, `×40` to watch or `×100` to hurry. It is
+      stored, so it survives a restart and `make` commands follow it
 - [ ] `make demo-reset` **last**, immediately before you start
 - [ ] Check the badge says `REPLAY`, in amber. Do not take it on trust
 - [ ] GitHub open in a second tab, logged in, on [PR #11](https://github.com/secho/parity-workspace/pull/11)

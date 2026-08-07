@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Db } from '../db/client.js';
 import { agentReadiness, prReadiness, type Config } from '../env.js';
 import { beats, DEMO_SECOND, DEMO_TARGET } from '../demo/beats.js';
-import { activeMode, isReplay, replaySpeed, setMode, setReplaySpeed } from '../replay/mode.js';
+import { activeMode, isReplay, persistMode, replaySpeed, setMode, setReplaySpeed } from '../replay/mode.js';
 import { replaySource } from '../replay/source.js';
 
 /**
@@ -48,6 +48,10 @@ export async function demoRoutes(app: FastifyInstance, db: Db, config: Config): 
     }
 
     setMode(wanted);
+    // Written down, not just held in memory. The container runs `tsx watch`, so any source edit
+    // restarts this process — and a mode that silently reverted to the environment is how a
+    // campaign ends up costing $9 on a stack whose badge said REPLAY.
+    await persistMode(db, wanted, req.body?.speed === undefined ? undefined : Number(req.body.speed));
     app.log.warn(`PARITY_MODE switched to ${wanted} at runtime (env says ${config.mode})`);
     return { mode: activeMode(config), replaySpeed: replaySpeed(), configured: config.mode };
   });

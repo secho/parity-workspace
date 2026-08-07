@@ -575,15 +575,20 @@ async function main(): Promise<void> {
     section('8 · Reset and restore are two halves of one mechanism');
 
     const resetProbe = await probe('src/cli/probe-reset.ts');
-    const survives = resetProbe.survives as string[];
+    // Two tables are configuration rather than state: the tier table, reasserted on every boot,
+    // and the runtime settings the mode switch writes. Neither is analysis, so neither is cleared
+    // by a reset or carried by the snapshot — and a demo that lost its mode to `make demo-reset`
+    // would be the same silent revert that made persisting it necessary.
+    const CONFIG_TABLES = ['policy_rules', 'runtime_settings'];
+    const survives = (resetProbe.survives as string[]).filter((t) => !CONFIG_TABLES.includes(t));
     check(
-      JSON.stringify(survives) === JSON.stringify(['policy_rules']),
-      'after a reset the only table still holding rows is the tier table',
-      survives.join(', ') || 'none',
+      survives.length === 0,
+      'after a reset the only tables still holding rows are configuration',
+      survives.join(', ') || 'none beyond ' + CONFIG_TABLES.join(' + '),
     );
-    note('configuration, reasserted on boot. Anything else here is state the demo cannot get rid of');
+    note('anything else here would be state the demo cannot get rid of');
 
-    const allTables = (resetProbe.allTables as string[]).filter((t) => t !== 'policy_rules');
+    const allTables = (resetProbe.allTables as string[]).filter((t) => !CONFIG_TABLES.includes(t));
     const snapshot = [...SNAPSHOT_TABLES].sort();
     check(
       JSON.stringify(allTables.sort()) === JSON.stringify(snapshot),

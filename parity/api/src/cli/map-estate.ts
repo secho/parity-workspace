@@ -12,6 +12,7 @@ import { seedPolicy } from '../agent/policy.js';
 import { executeRun, specRun, triageRun } from '../agent/runner.js';
 import { procedures } from '../db/schema.js';
 import { agentReadiness, loadConfig } from '../env.js';
+import { announceMode, loadMode } from '../replay/mode.js';
 
 const config = loadConfig();
 
@@ -25,6 +26,8 @@ if (!readiness.ready) {
 const store = openStore(config.pgUrl);
 await waitForPostgres(store.pool);
 await applyMigrations(store.db);
+await loadMode(store.db);
+announceMode(config);
 await seedPolicy(store.db);
 
 const rows = await store.db.select({ name: procedures.name }).from(procedures).orderBy(asc(procedures.name));

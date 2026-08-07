@@ -3,6 +3,7 @@ import { seedPolicy } from './agent/policy.js';
 import { openStore, waitForPostgres } from './db/client.js';
 import { applyMigrations } from './db/migrate.js';
 import { agentReadiness, loadConfig } from './env.js';
+import { loadMode } from './replay/mode.js';
 import { closeReplaySource } from './replay/source.js';
 import { agentRoutes } from './routes/agent.js';
 import { campaignRoutes } from './routes/campaigns.js';
@@ -24,6 +25,8 @@ await applyMigrations(store.db);
 // The tier table is configuration, not user data: it is reasserted on every boot so the
 // policy the hook enforces is the policy in the repository.
 await seedPolicy(store.db);
+// The mode someone last chose on /rezie, which must survive this process restarting.
+await loadMode(store.db);
 
 await healthRoutes(app, store.db);
 await estateRoutes(app, store.db);
