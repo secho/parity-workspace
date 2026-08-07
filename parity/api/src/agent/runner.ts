@@ -4,6 +4,7 @@ import type { Db } from '../db/client.js';
 import { agentRuns, agentSteps, auditEntries, procedures } from '../db/schema.js';
 import type { Config } from '../env.js';
 import { replayAgentRun } from '../replay/serve.js';
+import { isReplay } from '../replay/mode.js';
 import { llmEndpoint, runSkill, type RunResult } from './client.js';
 import { buildHooks } from './hooks.js';
 import { loadPolicy } from './policy.js';
@@ -58,7 +59,7 @@ export async function executeRun(
   // below this one exists to reach a model. Everything a caller can observe — the run row, the
   // steps arriving on the SSE stream at the recorded cadence, the handle that comes back — is
   // the same shape; what differs is that nothing is spent and the row says `replayed_from`.
-  if (config.mode === 'replay') return replayAgentRun(db, config, request, onStep);
+  if (isReplay(config)) return replayAgentRun(db, config, request, onStep);
 
   const skills = await loadSkills(config.skillsDir);
   const skill = await findSkill(config.skillsDir, request.skillName);

@@ -8,7 +8,8 @@ import type { Finding } from '../shadow/diff.js';
 import type { ShadowImplementation, ShadowOptions, ShadowResult } from '../shadow/run.js';
 import { materialiseArtefacts } from './materialise.js';
 import { procedureIdByName, replaySource } from './source.js';
-import { findRecording, playRecording, replaySpeed } from './stream.js';
+import { replaySpeed } from './mode.js';
+import { findRecording, playRecording } from './stream.js';
 
 /**
  * `PARITY_MODE=replay` — serving a recorded run instead of making one.

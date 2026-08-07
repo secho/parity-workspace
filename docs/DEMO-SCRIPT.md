@@ -58,6 +58,15 @@ same weight announces that what they are watching is choreographed before the fi
 Findable when you look for it, unreadable from the fifth row. Keep it on a second screen anyway if
 you can.
 
+**The mode switch is at the top of that page.** `REŽIM live | replay`, and in replay a
+`ZRYCHLENÍ ×1 | ×8 | ×40`. It takes effect immediately — no container restart — and everything
+that decides reads the same value, so the badge in the corner cannot say `LIVE` while runs are
+being replayed. It does **not** survive a restart: after one, `PARITY_MODE` wins again. If you want
+replay to be the default, put `PARITY_MODE=replay` in `.env`.
+
+Switching to replay checks the replay source first and refuses with the fix if it is missing, which
+is the right moment to find that out rather than four beats later.
+
 `hotovo` is derived from the database on every read, so it is a live "you are here" rather than a
 checklist — reload mid-demo, or hand the laptop to someone else, and it still knows. It also
 carries the warning that matters: if the stack is live, it says so, and says what beat 2b is about
@@ -224,9 +233,8 @@ Run in this order. The first three are the ones that have actually gone wrong.
       `make record-golden`
 - [ ] `make replay-check` — proves that snapshot restores, in a scratch database, before you depend
       on it in front of anyone
-- [ ] Start the stack in **replay** and leave it there for the whole demo — there is no mode switch
-      in the choreography any more:
-      `PARITY_MODE=replay PARITY_REPLAY_SPEED=40 docker compose up -d parity-api`
+- [ ] Set **replay** on `/rezie` — the switch at the top, `×40`. Or start the stack that way, so a
+      restart cannot surprise you: `PARITY_MODE=replay PARITY_REPLAY_SPEED=40 docker compose up -d parity-api`
 - [ ] `make demo-reset` **last**, immediately before you start
 - [ ] Check the badge says `REPLAY`, in amber. Do not take it on trust
 - [ ] GitHub open in a second tab, logged in, on [PR #11](https://github.com/secho/parity-workspace/pull/11)
@@ -268,7 +276,7 @@ happens — the gate being right, not broken.
 | `make open-pr PROC=deletion COMMIT=--commit` | ~2 s | — |
 | `Zmapovat estate`, per procedure | **5 min** | **$0,65** |
 | `make restore-golden` | 2 s | — |
-| Mode switch | 2 s | — |
+| Mode switch (`/rezie`, no restart) | instant | — |
 | Reference shadow run, replayed | 3 s | — |
 | Beat 3 spec, replayed at speed 8 | 38 s | — |
 | `Zmapovat estate` on a mapped estate | 266 ms, 14 skipped | — |

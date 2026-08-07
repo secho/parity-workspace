@@ -5,6 +5,7 @@ import type { Config } from '../env.js';
 import { connect } from '../ingest/mssql.js';
 import { readIdentityColumns, readParameters } from '../oracle/execute.js';
 import { replayShadowRun } from '../replay/serve.js';
+import { isReplay } from '../replay/mode.js';
 import { selectCases, DEFAULT_CASE_LIMIT } from './cases.js';
 import { readColumns, readTrackedTables } from './changetracking.js';
 import { connectShadowRunner, revertShadow, shadowReadiness } from './database.js';
@@ -74,7 +75,7 @@ export async function runShadow(db: Db, config: Config, options: ShadowOptions):
   // `PARITY_MODE=replay`, decided before anything opens a connection. That is not an
   // optimisation: the claim a replayed run makes is that both database fingerprints are
   // untouched, and the only way to make it true rather than argued is to never connect.
-  if (config.mode === 'replay') {
+  if (isReplay(config)) {
     const replayed = await replayShadowRun(db, config, options);
     if ((options.kind ?? 'shadow') !== 'aa') {
       await promoteAfterShadow(

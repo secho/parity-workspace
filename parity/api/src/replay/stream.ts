@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, isNull } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { agentRuns, agentSteps, procedures } from '../db/schema.js';
+import { replaySpeed } from './mode.js';
 
 /**
  * Re-emitting a recorded run's steps, at the cadence they were recorded at.
@@ -17,9 +18,10 @@ import { agentRuns, agentSteps, procedures } from '../db/schema.js';
  * and it needs no new column. Measured on the `sp_CalculateOrderTotal` spec run, the gaps are
  * 3.4s · 3.5s · 3.2s · 0.4s · 3.6s · 143.7s · 125.1s · 18.2s, which is what thinking looks like.
  *
- * `PARITY_REPLAY_SPEED` divides those gaps. At 1 the replay takes exactly as long as the run
- * did; that is the honest default and the reason the demo script has to say which stretches are
- * replayed. Anything above 1 is a compression, and compressions get said out loud.
+ * `PARITY_REPLAY_SPEED` divides those gaps — see `./mode.ts`, which also holds the runtime
+ * switch. At 1 the replay takes exactly as long as the run did; that is the honest default and
+ * the reason the demo script has to say which stretches are replayed. Anything above 1 is a
+ * compression, and compressions get said out loud.
  */
 
 export interface RecordedStep {
@@ -44,11 +46,6 @@ export interface Recording {
   durationMs: number | null;
   steps: RecordedStep[];
 }
-
-export const replaySpeed = (): number => {
-  const raw = Number(process.env.PARITY_REPLAY_SPEED ?? 1);
-  return Number.isFinite(raw) && raw > 0 ? raw : 1;
-};
 
 /**
  * The most recent succeeded run of a skill against a procedure.

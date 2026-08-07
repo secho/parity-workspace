@@ -2,7 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import type { Db } from '../db/client.js';
 import { agentReadiness, prReadiness, type Config } from '../env.js';
 import { beats, DEMO_SECOND, DEMO_TARGET } from '../demo/beats.js';
-import { replaySpeed } from '../replay/stream.js';
+import { activeMode, isReplay, replaySpeed, setMode, setReplaySpeed } from '../replay/mode.js';
+import { replaySource } from '../replay/source.js';
 
 /**
  * The presenter's remote control. One GET, and the buttons post to the endpoints that already
@@ -14,11 +15,50 @@ import { replaySpeed } from '../replay/stream.js';
  * it used to be discoverable only by watching the first item take five minutes.
  */
 export async function demoRoutes(app: FastifyInstance, db: Db, config: Config): Promise<void> {
+  /**
+   * Switch mode without a restart.
+   *
+   * The one setting that decides whether the next click costs nothing or costs an hour was the
+   * one thing a presenter could not change without a terminal. It does not persist — restart the
+   * container and `PARITY_MODE` wins again — and everything that decides reads the effective
+   * value, so the badge in the corner cannot say `LIVE` while runs are being replayed.
+   *
+   * Switching TO replay checks the replay source first. A missing source is the most likely way
+   * this is misconfigured, and the good moment to find out is when the switch is flipped rather
+   * than four beats later in front of a room.
+   */
+  app.post<{ Body: { mode?: string; speed?: number } }>('/api/demo/mode', async (req, reply) => {
+    const wanted = req.body?.mode;
+    if (wanted !== 'live' && wanted !== 'replay') {
+      return reply.code(400).send({ error: 'mode must be live or replay' });
+    }
+
+    if (wanted === 'replay') {
+      try {
+        await replaySource(config);
+      } catch (err) {
+        return reply.code(503).send({ error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    if (req.body?.speed !== undefined) {
+      const speed = Number(req.body.speed);
+      if (!Number.isFinite(speed) || speed <= 0) return reply.code(400).send({ error: 'speed must be a positive number' });
+      setReplaySpeed(speed);
+    }
+
+    setMode(wanted);
+    app.log.warn(`PARITY_MODE switched to ${wanted} at runtime (env says ${config.mode})`);
+    return { mode: activeMode(config), replaySpeed: replaySpeed(), configured: config.mode };
+  });
+
   app.get('/api/demo', async () => {
-    const replay = config.mode === 'replay';
+    const replay = isReplay(config);
     return {
-      mode: config.mode,
-      replaySpeed: replay ? replaySpeed() : null,
+      mode: activeMode(config),
+      /** What the environment says, which the switch above overrides for this process only. */
+      configuredMode: config.mode,
+      replaySpeed: replaySpeed(),
       target: DEMO_TARGET,
       second: DEMO_SECOND,
       agentReady: agentReadiness().ready,
@@ -32,7 +72,7 @@ export async function demoRoutes(app: FastifyInstance, db: Db, config: Config): 
       warnings: [
         replay
           ? null
-          : 'Stack běží naživo. `Zmapovat estate` je 28 běhů modelu, hodina a ~$9 — pro demo přepni na `PARITY_MODE=replay`.',
+          : 'Režim je LIVE. `Zmapovat estate` je 28 běhů modelu, hodina a ~$9 — pro demo přepni nahoře na replay.',
         agentReadiness().ready ? null : 'Agent není nakonfigurovaný: v .env chybí API klíč.',
         prReadiness(config).ready ? null : 'GitHub token chybí — PR nepůjde otevřít. Spusť `make github-token`.',
       ].filter((w): w is string => w !== null),

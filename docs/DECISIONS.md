@@ -1535,3 +1535,23 @@ else, and it still knows where you are.
 Building it exposed two gaps worth naming: the shadow-run route could not select an
 implementation, so beat 4's green run needed a shell, and the deletion PR had no route at all
 because it belongs to three procedures rather than one.
+
+## 2026-08-06 · `PARITY_MODE` is switchable at runtime, from `/rezie`
+The flag started as an environment variable, and for a gate that is right. For a stage it is not:
+the demo is entirely replayed — live, mapping the estate is an hour and about $9 — so the single
+setting that decides whether the next click costs nothing or costs an hour was the one thing a
+presenter could not change without a terminal and a container restart.
+
+Three things keep the switch honest. Everything that decides reads the **effective** value through
+`isReplay()` — the runner, the shadow harness, the classifier and `/api/runtime` — so the badge in
+the corner cannot say `LIVE` while runs are being replayed; a flag that could be overridden without
+the display following would be worse than no switch. It does **not persist**: after a restart
+`PARITY_MODE` wins again, so the environment stays the source of truth for how the stack is
+configured and this is explicitly an override for one session, which the page says. And CLI
+processes never touch it — they build their own `Config`, `probe-replay` forcing replay and
+`probe-decision` forcing live — so the gate is unaffected by whatever the running API is set to,
+which is the property that matters most.
+
+Switching *to* replay opens the replay source first and refuses with the command that fixes it. A
+missing source is the most likely way this is misconfigured, and the moment to discover that is
+when the switch is flipped, not four beats later.

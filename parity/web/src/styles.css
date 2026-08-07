@@ -831,3 +831,68 @@ pre.source {
 .nav-backstage a:hover {
   color: var(--text-dim);
 }
+
+/* The mode switch. Prominent on purpose: it is the difference between the next click costing
+   nothing and costing an hour, and it used to be an environment variable. */
+.mode-switch {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0 18px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.mode-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+}
+
+.mode-toggle {
+  display: flex;
+  border: 1px solid var(--border-strong);
+}
+
+.mode-toggle button {
+  font-family: var(--mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+  background: var(--surface-2);
+  border: none;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+
+.mode-toggle button + button {
+  border-left: 1px solid var(--border-strong);
+}
+
+.mode-toggle button:hover:not(:disabled) {
+  color: var(--text-dim);
+}
+
+.mode-toggle button.active {
+  color: var(--text);
+  background: var(--bg);
+}
+
+/* Replay is the one that costs nothing, so it is the one that is allowed to be loud. */
+.mode-toggle button.active.replay {
+  color: var(--warn);
+}
+
+.mode-toggle button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.mode-hint {
+  font-size: 11px;
+  margin-left: auto;
+}

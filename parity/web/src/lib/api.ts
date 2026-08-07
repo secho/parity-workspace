@@ -375,7 +375,9 @@ export interface DemoBeat {
 
 export interface DemoState {
   mode: string;
-  replaySpeed: number | null;
+  /** What `PARITY_MODE` says. Differs from `mode` when the switch has been used this session. */
+  configuredMode: string;
+  replaySpeed: number;
   target: string;
   second: string;
   agentReady: boolean;
@@ -385,6 +387,15 @@ export interface DemoState {
 }
 
 export const fetchDemo = (): Promise<DemoState> => get<DemoState>('/api/demo');
+
+/**
+ * Flip live ⇄ replay without restarting anything.
+ *
+ * Rejects with 503 if replay is asked for and the replay source is not loaded — which is the
+ * moment to find that out, rather than four beats later.
+ */
+export const setDemoMode = (mode: 'live' | 'replay', speed?: number): Promise<{ mode: string; replaySpeed: number }> =>
+  send('/api/demo/mode', 'POST', { mode, speed });
 
 /**
  * Run one beat.

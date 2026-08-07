@@ -5,6 +5,7 @@ import type { Config } from '../env.js';
 import { classifyDiffRun, executeRun } from '../agent/runner.js';
 import { stableKey } from '../oracle/canonicalise.js';
 import { replayedVerdicts } from '../replay/serve.js';
+import { isReplay } from '../replay/mode.js';
 import type { Finding } from './diff.js';
 import type { ShadowResult } from './run.js';
 
@@ -111,7 +112,7 @@ export async function classifyRun(
   // In replay mode the verdicts arrived with the copied rows — reason, Czech explanation and
   // all. Asking the model again would be the one place a "replayed" run quietly spent money,
   // and it would be free to answer differently, which is what hard rule 5 forbids.
-  if (config.mode === 'replay') {
+  if (isReplay(config)) {
     const recorded = await replayedVerdicts(db, run.shadowRunId);
     const change = recorded.filter((v) => v.verdict === 'behaviour_change').length;
     say(`${recorded.length} findings, verdicts replayed — no model run`);

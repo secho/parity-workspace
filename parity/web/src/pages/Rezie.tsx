@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { cs } from '../copy';
-import { fetchDemo, runBeat, type DemoBeat, type DemoState } from '../lib/api';
+import { fetchDemo, runBeat, setDemoMode, type DemoBeat, type DemoState } from '../lib/api';
 
 /**
  * Režie — the presenter's remote control for `docs/DEMO-SCRIPT.md`.
@@ -57,6 +57,7 @@ function Beat({ beat, busy, onRun }: { beat: DemoBeat; busy: string | null; onRu
 export function Rezie(): JSX.Element {
   const [state, setState] = useState<DemoState | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [switching, setSwitching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const polling = useRef<number | null>(null);
 
@@ -107,18 +108,79 @@ export function Rezie(): JSX.Element {
   if (state === null) return <p className="empty">{cs.common.loading}</p>;
 
   const doneCount = state.beats.filter((b) => b.done).length;
+  const replay = state.mode === 'replay';
+
+  const switchTo = (mode: 'live' | 'replay', speed?: number): void => {
+    setSwitching(true);
+    setError(null);
+    setDemoMode(mode, speed).then(
+      () => {
+        setSwitching(false);
+        void load();
+      },
+      (err: Error) => {
+        setSwitching(false);
+        // A 503 here means the replay source is not loaded, which has one fix and it is worth
+        // printing rather than making someone read a status code.
+        setError(err.message.startsWith('503') ? cs.rezie.sourceMissing : err.message);
+      },
+    );
+  };
 
   return (
     <>
       <div className="topline">
         <h1>{cs.rezie.title}</h1>
-        <span className="subtle">
-          {cs.rezie.subtitle(doneCount, state.beats.length)}
-          {' · '}
-          <span className={`mono ${state.mode === 'replay' ? 'beat-replay' : 'beat-live'}`}>
-            {state.mode}
-            {state.replaySpeed !== null && state.replaySpeed !== 1 ? ` ×${state.replaySpeed}` : ''}
-          </span>
+        <span className="subtle">{cs.rezie.subtitle(doneCount, state.beats.length)}</span>
+      </div>
+
+      {/* The switch. Live, `Zmapovat estate` is an hour and about $9; replayed it is 94 seconds
+          and nothing — and until now that difference was an environment variable and a container
+          restart. It takes effect immediately and does not survive one. */}
+      <div className="mode-switch">
+        <span className="mode-label">{cs.rezie.mode}</span>
+        <div className="mode-toggle">
+          <button
+            type="button"
+            className={replay ? '' : 'active'}
+            disabled={switching || busy !== null}
+            onClick={() => switchTo('live')}
+            title={cs.runtime.modeLiveTooltip}
+          >
+            {cs.rezie.modeLive}
+          </button>
+          <button
+            type="button"
+            className={replay ? 'active replay' : ''}
+            disabled={switching || busy !== null}
+            onClick={() => switchTo('replay')}
+            title={cs.runtime.modeReplayTooltip}
+          >
+            {cs.rezie.modeReplay}
+          </button>
+        </div>
+
+        {replay && (
+          <>
+            <span className="mode-label">{cs.rezie.speed}</span>
+            <div className="mode-toggle" title={cs.rezie.speedHint}>
+              {[1, 8, 40].map((speed) => (
+                <button
+                  key={speed}
+                  type="button"
+                  className={state.replaySpeed === speed ? 'active' : ''}
+                  disabled={switching || busy !== null}
+                  onClick={() => switchTo('replay', speed)}
+                >
+                  ×{speed}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+
+        <span className="subtle mode-hint">
+          {state.mode === state.configuredMode ? cs.rezie.modeHint : cs.rezie.modeOverridden(state.configuredMode)}
         </span>
       </div>
 

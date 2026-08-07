@@ -190,6 +190,16 @@ export const cs = {
     done: 'hotovo',
     pending: 'čeká',
     columns: { beat: 'Beat', what: 'Co se stane', state: 'Stav', expect: 'Očekávaně' },
+    mode: 'Režim',
+    modeLive: 'live',
+    modeReplay: 'replay',
+    // Přepíná se za běhu, bez restartu kontejneru. Nepřežije restart — pak zase platí PARITY_MODE.
+    modeHint: 'Přepne se hned, bez restartu. Restart kontejneru vrátí to, co je v PARITY_MODE.',
+    modeOverridden: (configured: string) => `přepnuto za běhu · v .env je ${configured}`,
+    speed: 'zrychlení',
+    speedHint: 'Dělí nahrané pauzy. 1 = přesně tak dlouho, jak běh trval doopravdy.',
+    sourceMissing:
+      'Replay source není načtený — přehrávat není z čeho. Spusť `make load-replay-source` a zkus to znovu.',
     footnote:
       'Každé tlačítko volá endpoint, který existoval dřív, než tahle stránka vznikla — je to dálkové ovládání, ne druhá implementace dema. Stav se odvozuje z databáze při každém načtení, nic se tu neodškrtává.',
   },

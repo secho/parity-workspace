@@ -5,6 +5,7 @@ import { loadSkills } from '../agent/skills.js';
 import type { Db } from '../db/client.js';
 import { agentRuns, auditEntries, policyRules } from '../db/schema.js';
 import { agentReadiness, type Config } from '../env.js';
+import { activeMode } from '../replay/mode.js';
 
 /**
  * Provoz — skills, policy tiers and the audit log on one page, per SCHEDULE's cut.
@@ -77,7 +78,7 @@ export async function provozRoutes(app: FastifyInstance, db: Db, config: Config)
     return {
       provider: endpoint.provider,
       baseUrl: endpoint.baseUrl,
-      mode: config.mode,
+      mode: activeMode(config),
       agentReady: readiness.ready,
       agentBlockedReason: readiness.reasonCode,
       lastModelUsed: latest?.model ?? null,
