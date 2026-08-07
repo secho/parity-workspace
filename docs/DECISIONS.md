@@ -1555,3 +1555,28 @@ which is the property that matters most.
 Switching *to* replay opens the replay source first and refuses with the command that fixes it. A
 missing source is the most likely way this is misconfigured, and the moment to discover that is
 when the switch is flipped, not four beats later.
+
+## 2026-08-06 · Every screen polls; nothing waits for a reload
+Each screen was a snapshot taken at mount, which was fine while every action started on the screen
+that showed its result. It stopped being fine the moment `/rezie` could fire a beat, a campaign
+could run in the background, and a decision could be taken in another window: the only way to see
+the estate move was F5, and on a stage that reads as a broken app rather than as a page that has
+not been told.
+
+`usePoll` is deliberately dumb — no websockets, no cache invalidation, no dependency on which
+screen started the work. Every query behind it is a handful of indexed reads against a Postgres on
+localhost, and one every two seconds is cheaper than the SSE topic it would take to do this
+properly. It also cannot get out of sync with what happened, because it re-asks rather than being
+told. It skips hidden tabs and never overlaps itself.
+
+## 2026-08-06 · The service the agent wrote is visible on its own tab
+`implement-service` is the most expensive run in the platform and the one the demo talks about
+most, and its output was in `service_artifacts` and nowhere on screen — visible only indirectly,
+as a file list inside a PR that had to be assembled first. So after beat 4b there was literally
+nothing to show. The `Služba` tab renders the files as the agent wrote them, with each sha256 and
+the set hash the running container reports at `/health`.
+
+## 2026-08-06 · Assembling the migration PR is its own beat
+There was no beat for it, so the PR tab was empty at the end of a run-through and the demo's
+closing move had nothing behind it. It is beat 4d, and it must come after the green run because
+the body quotes that run's numbers — which is also why it cannot be folded into 4b.

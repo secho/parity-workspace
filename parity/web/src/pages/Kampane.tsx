@@ -10,6 +10,7 @@ import {
   type CampaignItemInfo,
   type CampaignRunInfo,
 } from '../lib/api';
+import { usePoll } from '../lib/poll';
 
 /**
  * Kampaně — hromadná práce nad estate.
@@ -99,6 +100,10 @@ export function Kampane(): JSX.Element {
   };
 
   useEffect(load, []);
+
+  // Campaigns are fire-and-forget and can be started from `/rezie` as well as from here, so this
+  // screen has to keep asking rather than assume it started everything it shows.
+  usePoll(() => void load());
 
   useEffect(() => {
     void fetchEstate().then((estate) => {

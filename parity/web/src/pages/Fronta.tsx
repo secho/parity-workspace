@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { cs, formatInt } from '../copy';
 import { decide, fetchQueue, fetchQueueSummary, undecide, type QueueItem, type QueueSummary } from '../lib/api';
+import { usePoll } from '../lib/poll';
 
 /**
  * Fronta rozhodnutí — the only screen in Parity where a human is asked for something.
@@ -33,7 +34,7 @@ function Sides({ item }: { item: QueueItem }): JSX.Element {
   );
 }
 
-function Item({ item, onChange }: { item: QueueItem; onChange: () => void }): JSX.Element {
+function Item({ item, onChange }: { item: QueueItem; onChange: () => Promise<unknown> }): JSX.Element {
   const [busy, setBusy] = useState(false);
 
   const act = (action: string): void => {
@@ -41,7 +42,7 @@ function Item({ item, onChange }: { item: QueueItem; onChange: () => void }): JS
     decide(item.signature, action, item.shadowRunId).then(
       () => {
         setBusy(false);
-        onChange();
+        void onChange();
       },
       () => setBusy(false),
     );
@@ -52,7 +53,7 @@ function Item({ item, onChange }: { item: QueueItem; onChange: () => void }): JS
     undecide(item.signature).then(
       () => {
         setBusy(false);
-        onChange();
+        void onChange();
       },
       () => setBusy(false),
     );
@@ -127,12 +128,20 @@ export default function Fronta(): JSX.Element {
   const [summary, setSummary] = useState<QueueSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const load = (): void => {
-    fetchQueue().then(setQueue, (err: Error) => setError(err.message));
-    fetchQueueSummary().then(setSummary, () => undefined);
-  };
+  const load = (): Promise<unknown> =>
+    Promise.all([
+      fetchQueue().then(setQueue, (err: Error) => setError(err.message)),
+      fetchQueueSummary().then(setSummary, () => undefined),
+    ]);
 
-  useEffect(load, []);
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // A shadow run fired from `/rezie` fills this screen. Without the poll it stayed empty until
+  // someone reloaded, which is the worst possible moment for a reload — beat 4 opens on it.
+  usePoll(load);
 
   if (error !== null)
     return (

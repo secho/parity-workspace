@@ -73,7 +73,12 @@ carries the warning that matters: if the stack is live, it says so, and says wha
 to cost.
 
 The two beats with no button are the two a person does: **4a**, the decisions in Fronta, and
-**4d**, looking at the Estate screen.
+**4e**, looking at the Estate screen.
+
+Every screen polls every two seconds, so nothing needs a reload: start a beat here, switch to
+Estate or Fronta, and the numbers arrive on their own. A row that has just run says so for a few
+seconds — the state chip alone cannot, because a beat that was already `hotovo` looks identical
+before and after.
 
 ---
 
@@ -180,9 +185,15 @@ same case set, same database — only the implementation changed.
 > "Referenční implementace tam zůstává schválně. Je to kontrola: kdyby diff engine přestal
 > fungovat, byl by zelený i nad ní. Není."
 
-The `PR` tab: spec, golden tests, the service and the recorded decision, with the shadow
-numbers and `Kandidáti na opravu` in the body. Opening it is a click — the policy tier table
-refuses `open_pr` to every agent, and the `Provoz` page shows that rule.
+The `Služba` tab: the files the agent wrote, as it wrote them, with their sha256 and the set hash
+the running container reports at `/health`. That is what makes *"co běží, je to, co agent napsal"*
+a query rather than a claim.
+
+Then assemble the PR — beat 4d on `/rezie`, or `make open-pr PROC=sp_CalculateOrderTotal`. The
+`PR` tab: spec, golden tests, the service and the recorded decision, five files in one commit,
+with the shadow numbers and `Kandidáti na opravu` in the body. It has to come **after** the green
+run, because the body quotes its numbers. Opening it is a click — the policy tier table refuses
+`open_pr` to every agent, and the `Provoz` page shows that rule.
 
 Back to Estate: **coverage 0 % → 5,21 %**, `migrováno` 1, and `sp_CalculateOrderTotal` has no
 blocker at all. 5,21 % is that one procedure's real share of ninety days of traffic — the number

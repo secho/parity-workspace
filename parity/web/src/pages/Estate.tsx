@@ -4,6 +4,7 @@ import { DataTable, type Column } from '../components/DataTable';
 import { StatusBar } from '../components/StatusBar';
 import { cs, formatDate, formatInt, formatPercent } from '../copy';
 import { fetchEstate, type EstateProcedure, type EstateResponse } from '../lib/api';
+import { usePoll } from '../lib/poll';
 
 const CLASS_TONE: Record<string, string> = {
   pure_read: 'good',
@@ -19,9 +20,17 @@ export function Estate(): JSX.Element {
   const [params, setParams] = useSearchParams();
   const blockerFilter = params.get('blocker');
 
+  const load = (): Promise<unknown> => fetchEstate().then(setData, (err: Error) => setError(err.message));
+
   useEffect(() => {
-    fetchEstate().then(setData, (err: Error) => setError(err.message));
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Coverage, the status bar and the blocker table all move while a campaign runs somewhere else.
+  // This is the screen the demo opens and closes on, so it is the one where a stale number costs
+  // the most.
+  usePoll(load);
 
   if (error !== null) return <p className="empty">{cs.common.error}: {error}</p>;
   if (data === null) return <p className="empty">{cs.common.loading}</p>;

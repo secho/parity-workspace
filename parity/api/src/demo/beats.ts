@@ -106,6 +106,14 @@ export async function beats(db: Db): Promise<Beat[]> {
         );
   const decided = await count(db, db.select({ n }).from(decisions).where(eq(decisions.procedureId, targetId)));
   const artefacts = await count(db, db.select({ n }).from(serviceArtifacts).where(eq(serviceArtifacts.procedureId, targetId)));
+  const migrationPr = (
+    await db
+      .select()
+      .from(pullRequests)
+      .where(and(eq(pullRequests.procedureId, targetId), eq(pullRequests.kind, 'migration')))
+      .orderBy(sql`${pullRequests.id} desc`)
+      .limit(1)
+  )[0];
   const runs = await count(db, db.select({ n }).from(agentRuns));
 
   const encoded = encodeURIComponent(DEMO_TARGET);
@@ -230,8 +238,32 @@ export async function beats(db: Db): Promise<Beat[]> {
       slow: true,
     },
     {
-      key: 'estate',
+      key: 'migration-pr',
       beat: '4d',
+      title: 'Sestavit PR s migrací',
+      detail:
+        'Specifikace, golden testy, služba a zapsané rozhodnutí v jednom commitu. Musí až po zeleném běhu — do popisu jdou jeho čísla.',
+      expect: '~1 s · sestaveno, neotevřeno',
+      path: `/api/procedures/${encoded}/pr`,
+      body: {
+        summaryCs:
+          'Výpočet ceny objednávky se přesouvá ze stored procedury do samostatné služby. ' +
+          'Chování zůstává identické — včetně toho, které je podle specifikace sporné.',
+        fixCandidatesCs: '',
+      },
+      link: `/procedura/${encoded}`,
+      done: migrationPr !== undefined,
+      note:
+        migrationPr === undefined
+          ? 'PR zatím není sestavený'
+          : `${(migrationPr.files as { path: string }[]).length} souborů · větev ${migrationPr.branch} · ${
+              migrationPr.status === 'open' ? `otevřen #${migrationPr.number ?? '?'}` : 'sestaven, neotevřen'
+            }`,
+      slow: false,
+    },
+    {
+      key: 'estate',
+      beat: '4e',
       title: 'Zpátky na Estate',
       detail: 'Pokrytí se pohnulo, blocker tabulka se pohnula. Tohle není report o roadmapě — tohle je ta roadmapa.',
       expect: '—',

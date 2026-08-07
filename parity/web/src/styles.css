@@ -896,3 +896,35 @@ pre.source {
   font-size: 11px;
   margin-left: auto;
 }
+
+/* The row that just ran, and the row that is running. Both fade rather than blink: this is on a
+   projector and something flashing is something nobody can read. */
+.beat-flash td {
+  background: color-mix(in srgb, var(--good) 8%, transparent);
+}
+
+.beat-running td {
+  background: color-mix(in srgb, var(--warn) 8%, transparent);
+}
+
+.beat-just-ran {
+  white-space: nowrap;
+}
+
+/* --- the service the agent wrote ---------------------------------------------- */
+
+.service-file {
+  margin-top: 18px;
+}
+
+.service-file h3 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.service-sha {
+  font-weight: 400;
+  font-size: 11px;
+}

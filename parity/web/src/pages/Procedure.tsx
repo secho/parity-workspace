@@ -7,6 +7,7 @@ import {
   fetchProcedure,
   fetchPullRequest,
   fetchRuns,
+  fetchService,
   fetchShadow,
   fetchSpec,
   type AgentRunInfo,
@@ -15,10 +16,12 @@ import {
   type OracleResponse,
   type ProcedureResponse,
   type PullRequestRecord,
+  type ServiceArtifactSet,
   type ShadowResponse,
 } from '../lib/api';
+import { usePoll } from '../lib/poll';
 
-type Tab = 'source' | 'data' | 'coupling' | 'spec' | 'oracle' | 'shadow' | 'decisions' | 'pr' | 'steps';
+type Tab = 'source' | 'data' | 'coupling' | 'spec' | 'oracle' | 'shadow' | 'decisions' | 'service' | 'pr' | 'steps';
 
 export function Procedure(): JSX.Element {
   const { name = '' } = useParams();
@@ -33,6 +36,26 @@ export function Procedure(): JSX.Element {
   const [pr, setPr] = useState<{ latest: PullRequestRecord | null; readiness: { ready: boolean; reason: string | null } } | null>(
     null,
   );
+  const [service, setService] = useState<{ artifacts: ServiceArtifactSet | null; complete: boolean } | null>(null);
+
+  /**
+   * Everything this screen shows, re-read together.
+   *
+   * Split out of the mount effect so the poll below can call the same thing. Errors are swallowed
+   * per-request on purpose: a poll that fails once should leave the last good data on screen
+   * rather than blanking a page someone is presenting from.
+   */
+  const load = (): Promise<unknown> =>
+    Promise.all([
+      fetchProcedure(name).then(setData, (err: Error) => setError(err.message)),
+      fetchSpec(name).then((r) => setSpec(r.spec), () => undefined),
+      fetchOracle(name).then(setOracle, () => undefined),
+      fetchRuns(name).then((r) => setRuns(r.runs), () => undefined),
+      fetchShadow(name).then(setShadow, () => undefined),
+      fetchDecisions(name).then((r) => setDecisions(r.decisions), () => undefined),
+      fetchPullRequest(name).then(setPr, () => undefined),
+      fetchService(name).then(setService, () => undefined),
+    ]);
 
   useEffect(() => {
     setData(null);
@@ -40,16 +63,17 @@ export function Procedure(): JSX.Element {
     setOracle(null);
     setRuns([]);
     setShadow(null);
-    fetchProcedure(name).then(setData, (err: Error) => setError(err.message));
-    void fetchSpec(name).then((r) => setSpec(r.spec), () => undefined);
-    void fetchOracle(name).then(setOracle, () => undefined);
-    void fetchRuns(name).then((r) => setRuns(r.runs), () => undefined);
     setDecisions([]);
     setPr(null);
-    void fetchShadow(name).then(setShadow, () => undefined);
-    void fetchDecisions(name).then((r) => setDecisions(r.decisions), () => undefined);
-    void fetchPullRequest(name).then(setPr, () => undefined);
+    setService(null);
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [name]);
+
+  // The beats fire from `/rezie`, the campaigns run in the background, and a decision can be
+  // taken in another window. Without this the screen was a snapshot taken at mount and the only
+  // way to see any of it was a reload.
+  usePoll(load, 2000, [name]);
 
   // Agent steps arrive live while a run is in flight. They are persisted as they happen,
   // so this stream is a view onto the table rather than the only copy of it.
@@ -174,6 +198,10 @@ export function Procedure(): JSX.Element {
         <button className={tab === 'decisions' ? 'active' : ''} onClick={() => setTab('decisions')}>
           {cs.procedure.decisionsTab}
           {decisions.length > 0 && <span className="chip none" style={{ marginLeft: 6 }}>{decisions.length}</span>}
+        </button>
+        <button className={tab === 'service' ? 'active' : ''} onClick={() => setTab('service')}>
+          {cs.service.tab}
+          {service?.artifacts != null && <span className="tab-count">{service.artifacts.files.length}</span>}
         </button>
         <button className={tab === 'pr' ? 'active' : ''} onClick={() => setTab('pr')}>
           {cs.pr.title}
@@ -455,6 +483,50 @@ export function Procedure(): JSX.Element {
               ))}
             </tbody>
           </table>
+        ))}
+
+      {/*
+        The service the agent wrote — which until now was in the database and nowhere on screen.
+        `implement-service` is the most expensive run in the whole platform and the one the demo
+        talks about most, and its output was invisible unless a PR had been assembled on top of it.
+      */}
+      {tab === 'service' &&
+        (service?.artifacts == null ? (
+          <p className="empty">{cs.service.empty}</p>
+        ) : (
+          <>
+            <dl className="facts">
+              <div>
+                <dt>{cs.service.attempt}</dt>
+                <dd className="mono">{service.artifacts.attempt}</dd>
+              </div>
+              <div>
+                <dt>{cs.service.runHash}</dt>
+                <dd className="mono">{service.artifacts.runHash.slice(0, 16)}</dd>
+              </div>
+              <div>
+                <dt>{cs.service.complete}</dt>
+                <dd>
+                  <span className={`chip ${service.complete ? 'good' : 'warn'}`}>
+                    {service.complete ? cs.service.yes : cs.service.no}
+                  </span>
+                </dd>
+              </div>
+            </dl>
+            <p className="subtle">{cs.service.hint}</p>
+            {service.artifacts.files.map((file) => (
+              <div key={file.path} className="service-file">
+                <h3 className="mono">
+                  {file.path}
+                  <span className="subtle service-sha">
+                    {' '}
+                    sha256 {file.sha256.slice(0, 12)} · {file.contents.length} znaků
+                  </span>
+                </h3>
+                <pre className="mono source">{file.contents}</pre>
+              </div>
+            ))}
+          </>
         ))}
 
       {/*

@@ -189,6 +189,9 @@ export const cs = {
     open: 'Otevřít',
     done: 'hotovo',
     pending: 'čeká',
+    // Krátké potvrzení, že kliknutí dopadlo — samotný chip `hotovo` to neřekne u beatu, který
+    // byl hotový už předtím.
+    justRan: (seconds: number) => `proběhlo za ${seconds < 1 ? seconds.toFixed(1) : Math.round(seconds)} s`,
     columns: { beat: 'Beat', what: 'Co se stane', state: 'Stav', expect: 'Očekávaně' },
     mode: 'Režim',
     modeLive: 'live',
@@ -256,6 +259,19 @@ export const cs = {
       accept: 'Přijmout změnu',
       escalate: 'Eskalovat',
     },
+  },
+
+  service: {
+    tab: 'Služba',
+    empty: 'Náhrada zatím není. Vzniká skillem implement-service.',
+    attempt: 'pokus',
+    runHash: 'hash sady',
+    complete: 'kompletní',
+    yes: 'ano',
+    no: 'chybí soubor',
+    hint:
+      'Tohle napsal agent, tak jak to je. `index.ts` a `db.ts` jsou kontrakt migračního harnessu a patří platformě — ' +
+      'agent píše jenom pravidla. Hash sady je to, co běžící kontejner hlásí na /health, takže „co běží, je to, co agent napsal" je dotaz, ne tvrzení.',
   },
 
   pr: {

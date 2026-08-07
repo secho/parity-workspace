@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { cs } from '../copy';
 import { fetchDemo, runBeat, setDemoMode, type DemoBeat, type DemoState } from '../lib/api';
+import { usePoll } from '../lib/poll';
 
 /**
  * Režie — the presenter's remote control for `docs/DEMO-SCRIPT.md`.
@@ -22,11 +23,22 @@ import { fetchDemo, runBeat, setDemoMode, type DemoBeat, type DemoState } from '
  * possible moment.
  */
 
-function Beat({ beat, busy, onRun }: { beat: DemoBeat; busy: string | null; onRun: (b: DemoBeat) => void }): JSX.Element {
+function Beat({
+  beat,
+  busy,
+  justRan,
+  onRun,
+}: {
+  beat: DemoBeat;
+  busy: string | null;
+  justRan: { key: string; ms: number } | null;
+  onRun: (b: DemoBeat) => void;
+}): JSX.Element {
   const running = busy === beat.key;
+  const flash = justRan?.key === beat.key;
 
   return (
-    <tr className={beat.done ? 'beat-done' : ''}>
+    <tr className={`${beat.done ? 'beat-done' : ''}${flash ? ' beat-flash' : ''}${running ? ' beat-running' : ''}`}>
       <td className="mono subtle beat-number">{beat.beat}</td>
       <td>
         <div className="beat-title">{beat.title}</div>
@@ -48,7 +60,16 @@ function Beat({ beat, busy, onRun }: { beat: DemoBeat; busy: string | null; onRu
         )}
       </td>
       <td className="beat-state">
-        <span className={`chip ${beat.done ? 'good' : 'none'}`}>{beat.done ? cs.rezie.done : cs.rezie.pending}</span>
+        {/* What just happened, for a few seconds. The `note` beside it is the durable answer —
+            this is the acknowledgement that the click landed, which the state chip alone does not
+            give when a beat was already `hotovo` before it ran. */}
+        {flash ? (
+          <span className="chip good beat-just-ran">{cs.rezie.justRan((justRan?.ms ?? 0) / 1000)}</span>
+        ) : running ? (
+          <span className="chip warn">{cs.rezie.running}</span>
+        ) : (
+          <span className={`chip ${beat.done ? 'good' : 'none'}`}>{beat.done ? cs.rezie.done : cs.rezie.pending}</span>
+        )}
       </td>
     </tr>
   );
@@ -59,36 +80,32 @@ export function Rezie(): JSX.Element {
   const [busy, setBusy] = useState<string | null>(null);
   const [switching, setSwitching] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const polling = useRef<number | null>(null);
+  const [justRan, setJustRan] = useState<{ key: string; ms: number } | null>(null);
 
   const load = (): Promise<void> => fetchDemo().then(setState, (err: Error) => setError(err.message));
 
   useEffect(() => {
     void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // While a slow beat runs, the state is refreshed every second so the notes fill in as the work
-  // lands — the campaign items, the case counts, the run numbers. Not a spinner: the numbers are
-  // what the presenter is talking over.
-  useEffect(() => {
-    if (busy === null) {
-      if (polling.current !== null) window.clearInterval(polling.current);
-      polling.current = null;
-      return undefined;
-    }
-    polling.current = window.setInterval(() => void load(), 1000);
-    return () => {
-      if (polling.current !== null) window.clearInterval(polling.current);
-    };
-  }, [busy]);
+  // Always, not only while this page started something. A beat's effects can arrive from a
+  // campaign running in the background, and the state can move because someone clicked in another
+  // window — so the page keeps asking rather than assuming it is the only thing driving. Faster
+  // while a beat is in flight, because that is when the notes fill in one by one.
+  usePoll(load, busy === null ? 2000 : 1000, [busy]);
 
   const onRun = (beat: DemoBeat): void => {
     if (beat.path === null) return;
     setBusy(beat.key);
     setError(null);
+    const started = Date.now();
     runBeat(beat.path, beat.body).then(
       () => {
         setBusy(null);
+        setJustRan({ key: beat.key, ms: Date.now() - started });
+        // Long enough to read while talking, short enough that it is gone before the next beat.
+        window.setTimeout(() => setJustRan((current) => (current?.key === beat.key ? null : current)), 8000);
         void load();
       },
       (err: Error) => {
@@ -204,7 +221,7 @@ export function Rezie(): JSX.Element {
         </thead>
         <tbody>
           {state.beats.map((beat) => (
-            <Beat key={beat.key} beat={beat} busy={busy} onRun={onRun} />
+            <Beat key={beat.key} beat={beat} busy={busy} justRan={justRan} onRun={onRun} />
           ))}
         </tbody>
       </table>
