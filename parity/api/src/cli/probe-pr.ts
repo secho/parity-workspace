@@ -25,7 +25,13 @@ import { openStore, waitForPostgres } from '../db/client.js';
 import { agentRuns, auditEntries, pullRequests } from '../db/schema.js';
 import { loadConfig } from '../env.js';
 
-const config = loadConfig();
+// Forced to `live`, whatever the stack is configured as.
+//
+// This probe exists to prove that a real agent, really reaching for a tool it is not allowed, is
+// really refused by the PreToolUse hook. Replayed, it would reach for nothing and be refused
+// nothing — and would report a pass, which is the one outcome a control must not be able to
+// produce by accident. Found on a stack left in replay mode after a rehearsal.
+const config = { ...loadConfig(), mode: 'live' };
 const store = openStore(config.pgUrl);
 await waitForPostgres(store.pool);
 await seedPolicy(store.db);

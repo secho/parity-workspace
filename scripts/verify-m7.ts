@@ -716,9 +716,19 @@ async function main(): Promise<void> {
       cwd: ROOT,
       maxBuffer: 32 * 1024 * 1024,
       timeout: 600_000,
-    }).catch((err: { stdout?: string }) => {
-      console.error(`\nRESTORE FAILED — run \`make restore-golden\` by hand: ${err.stdout ?? ''}`);
-    });
+    })
+      // And re-read the estate, like `make restore-golden` does: the snapshot carries the
+      // invocation counts of the day it was recorded, and this gate tags capture rows of its own.
+      .then(() =>
+        exec('docker', ['compose', 'exec', '-T', 'parity-api', 'npx', 'tsx', 'src/cli/ingest.ts'], {
+          cwd: ROOT,
+          maxBuffer: 32 * 1024 * 1024,
+          timeout: 600_000,
+        }),
+      )
+      .catch((err: { stdout?: string }) => {
+        console.error(`\nRESTORE FAILED — run \`make restore-golden\` by hand: ${err.stdout ?? ''}`);
+      });
 
     await sa.close();
     await client.end();

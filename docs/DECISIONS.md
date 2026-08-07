@@ -1480,3 +1480,33 @@ It holds an id from the replay source. A foreign key cannot express a cross-data
 the constraint that existed while the two were one database was dropped at M7 rather than kept as
 something that happened to hold. The first replay after the source moved failed on it immediately,
 which is the good version of finding out.
+
+## 2026-08-06 · `write_triage` promotes campaign_status, never demotes it
+Beat 2 runs `Smazat mrtvé procedury` first, because it is the one that finishes in front of the
+room, and `Zmapovat estate` second. Triage then set `campaign_status = 'specced'` flat, which
+walked the three dead procedures back from `deleted` — the estate un-deleted them thirty seconds
+after the presenter said they were going. Same rule as both ladders now: promote, never demote,
+written as a `CASE` so it is one statement. Live behaviour, not a replay artefact; found by
+rehearsing beat 2 in the order the script actually uses.
+
+## 2026-08-06 · The policy probes force `mode: 'live'`
+`probe-decision`, `probe-pr` and `probe-policy` exist to prove that a real agent really reaching
+for a tool it is not allowed is really refused by the `PreToolUse` hook. Replayed, they reach for
+nothing and are refused nothing — and report a pass, which is the one outcome a control must not
+be able to produce by accident. Found on a stack left in replay mode after a rehearsal, where
+`verify-m6` went 77/80 for a reason that had nothing to do with the policy table.
+
+## 2026-08-06 · `make restore-golden` re-ingests
+The snapshot carries the invocation counts of the day it was recorded, and the capture keeps
+growing — every acceptance run tags a few calls of its own. `ingest` refreshes estate facts and
+deliberately leaves analysis alone, so restoring and then re-ingesting gives a state that is
+internally consistent: analysis from the snapshot, counts from the estate. Beat 1 reads that
+number off the screen, so it has to be today's.
+
+## 2026-08-06 · The gates are order-dependent, and that is documented rather than fixed
+`verify-m2` is written for the estate M2 had — nothing analysed — and three of its checks
+legitimately fail against a restored one: two coverage assertions and a probe that moves
+`oracle_state` and expects the blocker to follow. It also ends by running `demo-reset`, so the
+order that works is `verify-m2 → restore-golden → verify-m6 → verify-m7`. Making those three
+checks tolerate an analysed estate would weaken them; the sequence is in the demo script's
+pre-flight instead.

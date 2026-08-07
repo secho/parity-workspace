@@ -1,4 +1,4 @@
-import { asc, eq } from 'drizzle-orm';
+import { asc, eq, sql } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { goldenTests, invariants, procedures, serviceArtifacts, specs } from '../db/schema.js';
 import { procedureIdByName } from './source.js';
@@ -73,7 +73,10 @@ async function copyTriage(live: Db, source: Db, liveId: number, sourceId: number
       oracleClass: row.oracleClass,
       riskClass: row.riskClass,
       seamRequirements: row.seamRequirements,
-      campaignStatus: 'specced',
+      // Promote, never demote — written the same way `write_triage` writes it, because a replayed
+      // triage has to leave the estate in the state a live one would. A flat `'specced'` walks a
+      // procedure back from `deleted`, which is exactly the order beat 2 runs its two campaigns in.
+      campaignStatus: sql`case when ${procedures.campaignStatus} = 'untouched' then 'specced' else ${procedures.campaignStatus} end`,
     })
     .where(eq(procedures.id, liveId));
 

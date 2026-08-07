@@ -1,5 +1,5 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
-import { and, desc, eq, isNull, ne, or, type SQL } from 'drizzle-orm';
+import { and, desc, eq, isNull, ne, or, sql as raw, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Db } from '../db/client.js';
 import { decisions, diffs, goldenTests, invariants, procedures, shadowRuns, specs } from '../db/schema.js';
@@ -175,7 +175,11 @@ export function parityTools(context: ToolContext) {
           oracleClass: oracle_class,
           riskClass: risk_class,
           seamRequirements: seam_requirements === '' ? null : seam_requirements,
-          campaignStatus: 'specced',
+          // Promote, never demote — the same rule the oracle and shadow ladders already follow.
+          // A flat `'specced'` un-deletes a procedure: run `Smazat mrtvé procedury` and then
+          // `Zmapovat estate`, which is the order beat 2 wants, and triage walks the three dead
+          // ones back from `deleted` to `specced`. Found by rehearsing the beat in that order.
+          campaignStatus: raw`case when ${procedures.campaignStatus} = 'untouched' then 'specced' else ${procedures.campaignStatus} end`,
         })
         .where(eq(procedures.name, context.procedureName));
       return text(`Recorded ${context.procedureName}: ${oracle_class} / ${risk_class}. ${reasoning}`);

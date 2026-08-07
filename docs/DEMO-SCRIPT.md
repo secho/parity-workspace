@@ -33,8 +33,10 @@ Measured on this stack:
 | Beat 2 — `Zmapovat estate` | **replay** | **94 s for all fourteen, $0,00** at `PARITY_REPLAY_SPEED=40` |
 | Beat 3 — spec | **replay** | 38 s at speed 8; 9 s at speed 40 |
 | Beat 3/4 — the whole lane as a campaign | **replay** | **15 s, $0,00** |
-| Beat 4 — reference shadow run | **replay** | 3 s, $0,00 |
+| Beat 3 — oracle (model replayed, baseline executed for real) | **replay** | 8 s, $0,00 |
+| Beat 3 — reference shadow run | **replay** | 3 s, $0,00 |
 | Beat 4 — the decision | live | a click and a row |
+| **Beats 1–4 end to end, from `make demo-reset`** | **replay** | **~2,5 min of machine time, $0,00** |
 
 `PARITY_MODE` is on the badge top right in both directions: `LIVE` in grey, `REPLAY` in amber.
 **Look at it before every beat.** Running a stretch in the wrong mode is the single most likely way
@@ -119,7 +121,16 @@ Open the decision queue. Four items, and they are two different stories:
   boundary. Caught before it shipped — and the agent's service, told to match the database's
   decimal arithmetic, does not have it.
 
-Show the side-by-side. Show the agent's reasoning. Click **Zachovat chování**.
+Show the side-by-side. Show the agent's reasoning. Click **Zachovat chování** — and click it on
+**all four**, not just the one you talked about. Two stories, two columns each.
+
+**The order matters and there is no warning if you get it wrong.** The queue shows the newest run
+per procedure, so the moment the green generated run lands, the reference run's findings stop
+being work and disappear from the screen. `proven` requires every one of them to have been
+decided, so a decision taken after the green run is a decision the ladder never sees: the
+procedure stays at `shadow`, the blocker stays `čeká na rozhodnutí`, and beat 4's closing move —
+the blocker clearing, `migrováno` appearing — does not happen. Rehearsed the wrong way round
+once, which is how this paragraph exists.
 
 > "Systém našel něco, co tady patnáct let nikdo neviděl. A všimněte si, že to sám potichu neopravil — zeptal se. Opraví se to zvlášť, jako vědomé rozhodnutí."
 
@@ -144,7 +155,9 @@ The `PR` tab: spec, golden tests, the service and the recorded decision, with th
 numbers and `Kandidáti na opravu` in the body. Opening it is a click — the policy tier table
 refuses `open_pr` to every agent, and the `Provoz` page shows that rule.
 
-Back to Estate: coverage moved, the blocker table moved.
+Back to Estate: **coverage 0 % → 5,21 %**, `migrováno` 1, and `sp_CalculateOrderTotal` has no
+blocker at all. 5,21 % is that one procedure's real share of ninety days of traffic — the number
+moves by what was actually migrated, not from nothing to nearly everything.
 
 > "A tahle tabulka není report o roadmapě. Ona je ta roadmapa."
 
@@ -199,10 +212,20 @@ Run in this order. The first three are the ones that have actually gone wrong.
 - [ ] GitHub open in a second tab, logged in, on [PR #11](https://github.com/secho/parity-workspace/pull/11)
 - [ ] Laptop on power, notifications off, browser zoom readable from the back of the room
 
-**Two gates are destructive — do not run them during setup.**
-`make verify-m2` ends by running `demo-reset`, and `make verify-m6` leaves two blocked probe runs
-behind. Both are fine; both want a `make restore-golden` afterwards. `make verify-m7` is the only
-one that leaves the database exactly as it found it.
+**The gates are order-dependent, and two of them move the database.** Run them in this order:
+
+```
+make verify-m2 → make restore-golden → make verify-m6 → make verify-m7
+```
+
+`verify-m2` is written for the estate M2 had — nothing analysed — and it ends by running
+`demo-reset`, so it goes first and cleans up after itself. `verify-m6` leaves two blocked probe
+runs behind, which is what its policy controls are for. `verify-m7` resets and restores inside its
+own last section and leaves the database exactly as it found it.
+
+`make restore-golden` also re-runs `ingest`, so the restored estate carries **today's** invocation
+counts rather than the snapshot's. Beat 1 reads that number off the screen, and every acceptance
+run tags a few capture rows of its own.
 
 **The decision queue is empty until a reference run re-fills it.** It shows the newest run per
 procedure, and after a restore the newest one is the green generated run with no findings. Beat 2½

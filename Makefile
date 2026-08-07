@@ -219,6 +219,12 @@ replay-check:
 restore-golden:
 	npm --prefix scripts install --silent
 	npm --prefix scripts run restore-golden
+	@# Then re-read the estate. The snapshot carries the invocation counts as they were when it
+	@# was recorded, and the capture keeps growing — every acceptance run tags a few calls of its
+	@# own. `ingest` refreshes estate FACTS and deliberately leaves analysis alone, so this makes
+	@# the restored state internally consistent: analysis from the snapshot, counts from the
+	@# estate. Beat 1 quotes that number off the screen, so it has to be today's.
+	@docker compose exec -T parity-api npx tsx src/cli/ingest.ts
 
 # Build the REPLAY SOURCE: a second Postgres database holding the recorded analysis, which
 # `make demo-reset` cannot reach.
