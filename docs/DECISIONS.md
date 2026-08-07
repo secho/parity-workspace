@@ -1510,3 +1510,26 @@ legitimately fail against a restored one: two coverage assertions and a probe th
 order that works is `verify-m2 → restore-golden → verify-m6 → verify-m7`. Making those three
 checks tolerate an analysed estate would weaken them; the sequence is in the demo script's
 pre-flight instead.
+
+## 2026-08-06 · The presenter's page is at `/rezie` and is not in the sidebar
+Every beat of the demo already had a way to run it — a `make` target, a curl, a campaign button.
+What did not exist was one surface that runs them in order and says which have happened, and the
+cost of that was a terminal on screen during a customer demo and a presenter remembering what
+comes next.
+
+It is absent from the navigation on purpose. `Estate · Kampaně · Fronta · Provoz` is what a
+customer is meant to look at; a fifth item reading *Režie* tells the room that what they are
+watching is choreographed before the first beat lands. Absent from the navigation, present in the
+product — it is at a URL, it is in the demo script, and the presenter keeps it on a second screen.
+Not hidden functionality: unlisted stage machinery.
+
+Two rules it inherits rather than invents. **Every button posts to the endpoint that already
+existed**, with the body the `make` target already passed, so the page is a remote control and not
+a second implementation of the choreography — if it drifted from `DEMO-SCRIPT.md` there would be
+no way to tell which was right. And **`done` is derived on every read** from the same rows the
+screens read, never a checklist the page ticks: reload mid-demo, or hand the laptop to someone
+else, and it still knows where you are.
+
+Building it exposed two gaps worth naming: the shadow-run route could not select an
+implementation, so beat 4's green run needed a shell, and the deletion PR had no route at all
+because it belongs to three procedures rather than one.

@@ -359,6 +359,42 @@ export const fetchCampaignRun = (id: number): Promise<{ run: CampaignRunInfo }> 
 export const startCampaign = (key: string, target?: string): Promise<{ run: CampaignRunInfo }> =>
   send(`/api/campaigns/${encodeURIComponent(key)}`, 'POST', { target: target ?? null });
 
+export interface DemoBeat {
+  key: string;
+  beat: string;
+  title: string;
+  detail: string;
+  expect: string;
+  path: string | null;
+  body?: Record<string, unknown>;
+  link: string | null;
+  done: boolean;
+  note: string | null;
+  slow: boolean;
+}
+
+export interface DemoState {
+  mode: string;
+  replaySpeed: number | null;
+  target: string;
+  second: string;
+  agentReady: boolean;
+  prReady: boolean;
+  warnings: string[];
+  beats: DemoBeat[];
+}
+
+export const fetchDemo = (): Promise<DemoState> => get<DemoState>('/api/demo');
+
+/**
+ * Run one beat.
+ *
+ * The path comes from the API rather than from this file, so the buttons cannot drift from the
+ * beats: there is one list, it is code, and it lives next to the derivation of `done`.
+ */
+export const runBeat = (path: string, body?: Record<string, unknown>): Promise<unknown> =>
+  send(path, 'POST', body ?? {});
+
 export const fetchQueue = (): Promise<{ open: QueueItem[]; decided: QueueItem[] }> => get('/api/queue');
 export const fetchQueueSummary = (): Promise<QueueSummary> => get<QueueSummary>('/api/queue/summary');
 export const decide = (signature: string, action: string, shadowRunId: number): Promise<unknown> =>

@@ -174,6 +174,22 @@ export const cs = {
     } as Record<string, string>,
   },
 
+  // Režie — the presenter's page. Not in the sidebar: every other screen is something a customer
+  // is meant to look at, and a nav item called `Režie` announces that the demo is choreographed
+  // before the first beat has landed.
+  rezie: {
+    title: 'Režie',
+    subtitle: (done: number, total: number) => `${done} z ${total} beatů hotových`,
+    run: 'Spustit',
+    running: 'běží…',
+    open: 'Otevřít',
+    done: 'hotovo',
+    pending: 'čeká',
+    columns: { beat: 'Beat', what: 'Co se stane', state: 'Stav', expect: 'Očekávaně' },
+    footnote:
+      'Každé tlačítko volá endpoint, který existoval dřív, než tahle stránka vznikla — je to dálkové ovládání, ne druhá implementace dema. Stav se odvozuje z databáze při každém načtení, nic se tu neodškrtává.',
+  },
+
   spec: {
     title: 'Specifikace',
     empty: 'Specifikace zatím není. Vzniká skillem extract-spec.',

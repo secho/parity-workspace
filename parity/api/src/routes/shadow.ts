@@ -237,15 +237,24 @@ export async function shadowRoutes(app: FastifyInstance, db: Db, config: Config)
    * Long — twenty seconds of replay plus one model run per finding — so the client is
    * expected to hold the request open. The SSE stream on the procedure page carries progress.
    */
-  app.post<{ Params: { name: string }; Body: { cases?: number; classify?: boolean } }>(
+  app.post<{ Params: { name: string }; Body: { cases?: number; classify?: boolean; implementation?: string } }>(
     '/api/procedures/:name/shadow/run',
     async (request, reply) => {
       const [procedure] = await db.select().from(procedures).where(eq(procedures.name, request.params.name));
       if (procedure === undefined) return reply.code(404).send({ error: 'procedure not found' });
 
+      // Which replacement. It used to be unreachable from here — the route always took the
+      // default — so beat 4's green run needed a shell. The two are not interchangeable and the
+      // demo shows both: `reference` is the control that diverges, `generated` is the agent's.
+      const implementation = request.body?.implementation ?? 'reference';
+      if (implementation !== 'reference' && implementation !== 'generated') {
+        return reply.code(400).send({ error: 'implementation must be reference or generated' });
+      }
+
       const result = await runShadow(db, config, {
         procedureName: request.params.name,
         limit: request.body?.cases,
+        implementation,
       });
       if (request.body?.classify === false) return { run: result, classified: null };
       return { run: result, classified: await classifyRun(db, config, result) };

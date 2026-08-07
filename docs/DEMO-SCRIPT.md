@@ -46,6 +46,24 @@ mode is an hour and $9 rather than 94 seconds.
 > "Tohle je nahraný běh — stejný mechanismus, kterým platforma přehraje váš provoz. Původní kroky
 > v původním rytmu, jen se u toho nic neplatí."
 
+## Drive it from `/rezie`, not from a terminal
+
+**<http://localhost:5190/rezie>** — one row per beat, in order, with a button, what it should cost,
+and what the estate says about it right now. Every button posts to the endpoint the `make` target
+already used; nothing there is a second implementation of this file.
+
+It is **deliberately not in the sidebar.** Every other screen is something the customer is meant to
+look at, and a nav item reading *Režie* announces that what they are watching is choreographed
+before the first beat lands. Keep it on a second screen or a second window.
+
+`hotovo` is derived from the database on every read, so it is a live "you are here" rather than a
+checklist — reload mid-demo, or hand the laptop to someone else, and it still knows. It also
+carries the warning that matters: if the stack is live, it says so, and says what beat 2b is about
+to cost.
+
+The two beats with no button are the two a person does: **4a**, the decisions in Fronta, and
+**4d**, looking at the Estate screen.
+
 ---
 
 ## Beat 1 — Estate (60 s)

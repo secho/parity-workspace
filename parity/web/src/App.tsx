@@ -6,6 +6,7 @@ import { Kampane } from './pages/Kampane';
 import Fronta from './pages/Fronta';
 import { Procedure } from './pages/Procedure';
 import { Provoz } from './pages/Provoz';
+import { Rezie } from './pages/Rezie';
 
 export function App(): JSX.Element {
   return (
@@ -19,6 +20,8 @@ export function App(): JSX.Element {
           <Route path="/kampane" element={<Kampane />} />
           <Route path="/fronta" element={<Fronta />} />
           <Route path="/provoz" element={<Provoz />} />
+          {/* Deliberately absent from the sidebar — see pages/Rezie.tsx. */}
+          <Route path="/rezie" element={<Rezie />} />
         </Routes>
       </main>
     </div>
