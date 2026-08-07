@@ -17,6 +17,7 @@ export type OracleState = 'none' | 'golden' | 'invariants' | 'shadow' | 'proven'
 export interface BlockerInput {
   oracleClass: string | null;
   oracleState: string;
+  campaignStatus: string;
   domain: string | null;
 }
 
@@ -41,6 +42,17 @@ export function blockerFor(p: BlockerInput): Blocker | null {
   // sp_CalculateOrderTotal is migrated — would land on `nepřiřazená doména`, which reads as a
   // NEW problem appearing at exactly the moment the story is supposed to be finishing.
   if (p.oracleState === 'proven') return null;
+
+  // A procedure on its way out is not blocked either, and for the same reason: this table is
+  // "co brání postupu", and nothing is in the way of a decision that has been taken. Added at M7
+  // when the deletion campaign started writing `deleted` — beat 2 marks three procedures for
+  // removal and the blocker column went on saying `chybí oracle` about them, thirty seconds after
+  // the presenter has explained that nobody is ever going to call them again.
+  //
+  // Second on purpose, ahead of the class checks and behind `proven`. The two are the same shape:
+  // both are ends of a lane, and the difference between them — migrated with proof, or removed
+  // for want of a single caller — is what `campaign_status` is for and what the status bar shows.
+  if (p.campaignStatus === 'deleted') return null;
 
   if (p.oracleClass === null) return { key: 'untriaged', label: 'netriazováno' };
 

@@ -549,13 +549,23 @@ async function main(): Promise<void> {
     check(target?.oracle_state === 'proven', 'oracle_state is `proven`', target?.oracle_state ?? '');
     check(target?.campaign_status === 'migrated', 'campaign_status is `migrated`', target?.campaign_status ?? '');
 
-    const estate = await getJson<{ procedures: { name: string; blocker: { key: string } | null }[] }>(`${API}/api/procedures`);
+    const estate = await getJson<{
+      procedures: { name: string; campaignStatus: string; blocker: { key: string } | null }[];
+    }>(`${API}/api/procedures`);
     const shown = estate.procedures.find((p) => p.name === TARGET);
     check(shown?.blocker === null, 'and nothing blocks it any more', JSON.stringify(shown?.blocker));
     note('proven short-circuits ahead of the domain check — domain is null on every row in this estate');
 
-    const others = estate.procedures.filter((p) => p.name !== TARGET);
-    check(others.every((p) => p.blocker !== null || p.name === TARGET), 'every other procedure still reports its blocker');
+    // Every procedure that is still IN the estate's lane. From M7 there are two ways out of it
+    // and both end at a null blocker: migrated with proof, or removed for want of a single caller.
+    // The check is that the column has not gone universally empty — that the other procedures
+    // still show real work — not that nothing else can ever finish.
+    const others = estate.procedures.filter((p) => p.name !== TARGET && p.campaignStatus !== 'deleted');
+    check(
+      others.length > 0 && others.every((p) => p.blocker !== null),
+      'every procedure still in the lane reports its blocker',
+      `${others.length} of ${estate.procedures.length - 1} others`,
+    );
 
     // --- 10 · Reset and determinism -------------------------------------------
     section('10 · Reset and determinism');
