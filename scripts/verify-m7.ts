@@ -458,6 +458,9 @@ async function main(): Promise<void> {
       kind: string;
       procedureId: number | null;
       status: string;
+      statusBefore: string | null;
+      numberBefore: number | null;
+      unchangedByCampaign: boolean;
       removals: number;
       additions: number;
       number: number | null;
@@ -470,10 +473,15 @@ async function main(): Promise<void> {
       `${pr.removals} removals, ${pr.additions} additions`,
     );
     note('tree entries with sha: null — the Git Data API\'s way of saying a path is not in the new tree');
+    // The delta, not the absolute state. What has to be true is that **the campaign never opens
+    // one** — which is a different sentence from "no pull request has ever been opened", and only
+    // the first is a property of this code. A person opened #11 for the demo, exactly as beat 2
+    // requires and exactly as the tier table intends: `open_pr` is tier 3 for every task class,
+    // so the thing that opens one always has a person behind it.
     check(
-      pr.status === 'assembled' && pr.number === null && pr.url === null,
-      'assembled and NOT opened',
-      `${pr.status}, number ${pr.number ?? 'none'}`,
+      pr.unchangedByCampaign,
+      'and running the campaign changes neither its status nor its number',
+      `${pr.statusBefore ?? 'none'}/${pr.numberBefore ?? '—'} → ${pr.status}/${pr.number ?? '—'}`,
     );
     check(pr.procedureId === null && pr.kind === 'deletion', 'belonging to no single procedure', `kind ${pr.kind}`);
 

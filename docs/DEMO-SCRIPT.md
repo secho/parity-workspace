@@ -8,28 +8,39 @@ happened twice, so it is now checked rather than remembered.
 
 ---
 
-## Live and recorded — per stretch, not per beat
+## The one structural thing to understand before rehearsing
 
-`PARITY_MODE` is on the badge in the top right, in both directions: `LIVE` in grey, `REPLAY` in
-amber. **Look at it before every beat.** Running a stretch in the wrong mode is the single most
-likely way this demo breaks, and it used to be invisible in one of the two directions.
+**Beat 1's blank slate and replay cannot both be true at the same moment**, and pretending
+otherwise is how this demo falls over on stage.
+
+`make demo-reset` gives beat 1 its empty estate — and it deletes the recordings, because the
+recordings *are* the analysis. Replay serves from those recordings. So after a reset there is
+nothing to replay, and a replay with no recording refuses loudly rather than emitting an empty
+run. Meanwhile the whole estate live is 28 + 10 model runs, about **$16 and an hour**, which is
+not nine minutes and never will be.
+
+So the demo has an explicit restore in the middle of it, and **it is said out loud**. That is not
+a workaround: `docs/SPEC.md` §4 asks for a recorded golden run in the repo so a fresh clone can
+demo immediately, and this is that run being used for exactly what it is for.
 
 | Stretch | Mode | Why |
 |---|---|---|
-| Beat 1 — Estate | live | Reads Postgres. Nothing to spend. |
-| Beat 2 — `Zmapovat estate` | live | Already-mapped items are **skipped**, so it costs nothing and finishes in seconds. |
-| Beat 2 — `Smazat mrtvé procedury` | live | No model call at all. The argument is a column of zeros. |
-| Beat 3 — spec, oracle | **replay** | ~5 minutes of real thinking per run. Say so out loud. |
+| Beat 1 — Estate | live, on a reset estate | Reads Postgres. Nothing to spend. |
+| Beat 2 — `Smazat mrtvé procedury` | **live, complete** | No model call at all. The argument is a column of zeros, and it finishes in front of you. |
+| Beat 2 — `Zmapovat estate` | **live, partial** | 28 model runs. Start it, watch three or four land, move on. It is superseded by the restore and stops itself. |
+| Beat 2½ — `make restore-golden` | — | 2 s. **Said out loud.** |
+| Beat 3 — spec, oracle | **replay** | ~5 minutes of real thinking per run. |
 | Beat 3 — shadow run | either | 16 s live if the shadow copy is up; replayed if the room is not worth the risk. |
 | Beat 4 — the decision | live | It is a click and a row. |
 | Beat 4 — `implement-service` | **replay** | Fifteen minutes of Opus. Never live in front of anyone. |
 | Beat 4 — the green shadow run, the PR | live | 20 s and an assembly. |
 
+`PARITY_MODE` is on the badge in the top right, in both directions: `LIVE` in grey, `REPLAY` in
+amber. **Look at it before every beat.** Running a stretch in the wrong mode is the single most
+likely way this demo breaks, and it used to be invisible in one of the two directions.
+
 > "Tohle je nahraný běh — stejný mechanismus, kterým platforma přehrává váš provoz. Vidíte
 > původní kroky v původním rytmu, jen se u toho nic neplatí."
-
-Replay serves from the recordings in the database, so **`make restore-golden` first** if the
-database has been reset. Replay with no recording refuses loudly — it never emits an empty run.
 
 ---
 
@@ -41,22 +52,47 @@ Open Parity on the Estate screen. Fourteen procedures, coverage near zero, every
 
 ## Beat 2 — Triage and phase 0 (2 min)
 
-Kampaně → `Zmapovat estate`. The agent reads all fourteen, classifies them, builds the coupling
-graph; the blocker table fills in.
-
-**Say the honest thing about the timing.** A full mapping is 28 model runs and about $7 — that is
-not a two-minute beat and never will be. The campaign skips what is already done, so on a mapped
-estate it completes in seconds and reports **14 přeskočeno**. On a genuinely fresh estate, start
-it, watch three or four items fill in, and move on while it runs.
-
-Three procedures show zero invocations over 90 days. Run `Smazat mrtvé procedury`. It marks them
-`deleted` and assembles a PR that removes exactly those three files — three deletions, nothing
-added. Show it.
+**Start with the deletion campaign — it is the one that finishes.** Three procedures show zero
+invocations over 90 days. Kampaně → `Smazat mrtvé procedury`. It marks them `deleted` and
+assembles a PR that removes exactly those three files: three deletions, 180 lines, nothing added.
+Watch the blocker table lose the `chybí oracle` row live — those three stop being work.
 
 > "První splátka dluhu za dvě minuty. Plně vratná, triviálně ověřitelná, nulové riziko. A žádné přepisování — jenom odstranění toho, co už nikdo nevolá."
 
-Opening it is a click, and the tier table refuses `open_pr` to every agent — so the PR is
-assembled by the machine and sent by a person. `make open-pr PROC=deletion --commit`.
+Then open it, and say why that is a separate act: the tier table refuses `open_pr` to every
+agent, so the machine assembled it and a person sends it.
+
+```
+make open-pr PROC=deletion COMMIT=--commit
+```
+
+It is idempotent — [PR #11](https://github.com/secho/parity-workspace/pull/11) is already open, so
+a rehearsal returns that one rather than opening a second. Have it in a second tab.
+
+**Then `Zmapovat estate`, and say the honest thing about the timing.** A full mapping is 28 model
+runs and about $7 — that is not a two-minute beat and never will be. Start it, watch three or
+four items land, and move on.
+
+> "Tohle poběží ještě osm minut. Nechám to běžet a ukážu vám výsledek, který platforma vyrobila
+> včera — je to ta samá kampaň, jen dokončená."
+
+## Beat 2½ — the recorded run (15 s, said out loud)
+
+```
+make restore-golden
+```
+
+Two seconds, 15 082 rows: the analysis of all fourteen procedures as the platform produced it,
+committed to the repository. This is what makes beats 3 and 4 possible in a nine-minute slot, and
+it is what `docs/SPEC.md` §4 asks for by name.
+
+> "Tady přeskakuju dopředu. Tohle není simulace — je to nahraný běh téhle platformy nad tímhle
+> estate, uložený v repozitáři. Za chvíli si ho přehrajeme krok po kroku."
+
+The mapping campaign from beat 2 notices its run is gone and stops itself rather than carrying on
+spending against an estate that has been replaced underneath it. **Switch `PARITY_MODE` to
+`replay` now** — the badge turns amber, and it is the last time in the demo you have to think
+about it.
 
 ## Beat 3 — One procedure, end to end (4 min)
 
@@ -141,13 +177,28 @@ Two more things to have ready rather than to volunteer:
 
 ## Pre-flight checklist
 
-- [ ] `make demo-reset` run within the last 10 minutes — or `make restore-golden` if a replayed beat is coming
-- [ ] `make shadow-run PROC=sp_CalculateOrderTotal "" reference` — **the decision queue is empty without it.** A green generated run is the newest run, and the queue shows the newest run per procedure
-- [ ] `PARITY_MODE` correct for the beat, checked on the badge, not remembered
-- [ ] `make remount` if the branch has changed since the containers started
-- [ ] GitHub PR page open in a second tab, logged in
-- [ ] `make record-golden` / `make replay-check` green, and the snapshot committed
-- [ ] Laptop on power, notifications off, browser zoom at a level readable from the back of the room
+Run in this order. The first three are the ones that have actually gone wrong.
+
+- [ ] `make remount` if the branch has changed since the containers started — a container serving
+      a deleted inode reports HEALTHY and replays against whatever it had in memory
+- [ ] `make replay-check` — proves the committed snapshot restores, in a scratch database, before
+      you depend on it in front of anyone
+- [ ] `make demo-reset` **last**, immediately before you start. Beat 1 is the only beat that needs
+      it, and everything else in this list is undone by it
+- [ ] `PARITY_MODE=live` for beats 1–2, `replay` from beat 2½. On the badge, not remembered
+- [ ] GitHub open in a second tab, logged in, on [PR #11](https://github.com/secho/parity-workspace/pull/11)
+- [ ] Laptop on power, notifications off, browser zoom readable from the back of the room
+
+**Two gates are destructive — do not run them during setup.**
+`make verify-m2` ends by running `demo-reset`, and `make verify-m6` leaves two blocked probe runs
+behind. Both are fine; both want a `make restore-golden` afterwards. `make verify-m7` is the only
+one that leaves the database exactly as it found it.
+
+**If you skip beat 3's live shadow run, the decision queue will be empty.** It shows the newest
+run per procedure, and the newest one is the green generated run with no findings. `make
+shadow-run PROC=sp_CalculateOrderTotal "" reference` re-fills it — and note that doing so makes
+`verify-m6` red on "every finding has been decided" until beat 4's click happens, which is the
+gate being right rather than broken.
 
 **Never quote a memorised number.** Invocation counts drift between the committed checksum, Postgres
 and MS SQL as the gate tags its own calls; whatever the demo says must come off the screen on the day.

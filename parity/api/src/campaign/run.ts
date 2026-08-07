@@ -116,8 +116,17 @@ async function execute(db: Db, config: Config, definition: CampaignDefinition, r
   const items = row.items as CampaignItem[];
   let costUsd = 0;
 
-  const save = async (): Promise<void> => {
-    await db
+  /**
+   * Persist progress — and report whether the run still exists.
+   *
+   * `false` means the row is gone, which happens for one reason on this stage: `make
+   * restore-golden`. The demo's own choreography restores the recorded analysis between beats 2
+   * and 3, and TRUNCATE takes any campaign still in flight with it. Without this the loop would
+   * carry on making live model calls against an estate that has been replaced underneath it,
+   * writing its results into a row nobody can see — visibly nothing, expensively.
+   */
+  const save = async (): Promise<boolean> => {
+    const updated = await db
       .update(campaignRuns)
       .set({
         items,
@@ -126,11 +135,18 @@ async function execute(db: Db, config: Config, definition: CampaignDefinition, r
         failed: items.filter((i) => i.status === 'failed').length,
         costUsd: String(costUsd),
       })
-      .where(eq(campaignRuns.id, runId));
+      .where(eq(campaignRuns.id, runId))
+      .returning({ id: campaignRuns.id });
+    return updated.length > 0;
   };
 
   try {
     for (const entry of items) {
+      // Asked before each item rather than only after one. An item is a live model run of up to
+      // a minute; the cheapest moment to notice the campaign has been superseded is before
+      // starting the next one, not after paying for it.
+      if (!(await save())) return;
+
       if (await definition.isComplete(db, entry)) {
         entry.status = 'skipped';
         entry.detail = 'už hotové';

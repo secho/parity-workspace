@@ -34,6 +34,16 @@ const settle = async (id: number, timeoutMs = 120_000): Promise<CampaignRun> => 
   }
 };
 
+// The deletion PR as it stands BEFORE any of this runs.
+//
+// What the section has to establish is that **the campaign never opens a pull request** — not
+// that no pull request has ever been opened. Those were the same sentence until a human opened
+// PR #11, which the demo's beat 2 requires. Measuring the delta is both the honest form and the
+// stronger one: it stays true whichever state the row starts in.
+const prBefore = (
+  await store.db.select().from(pullRequests).where(eq(pullRequests.kind, 'deletion')).orderBy(desc(pullRequests.id)).limit(1)
+)[0];
+
 // --- 1 and 2 · start, and the refusal ------------------------------------------------------
 //
 // Both started in the same tick, deliberately. Over HTTP the second POST would arrive some
@@ -100,6 +110,11 @@ console.log(
       },
       pr: {
         exists: pr !== undefined,
+        statusBefore: prBefore?.status ?? null,
+        numberBefore: prBefore?.number ?? null,
+        // The campaign changed neither. `open_pr` is tier 3 for every task class, so nothing an
+        // agent or a campaign does can move this row's status — only a person with a command line.
+        unchangedByCampaign: (prBefore?.status ?? null) === (pr?.status ?? null) && (prBefore?.number ?? null) === (pr?.number ?? null),
         kind: pr?.kind ?? null,
         procedureId: pr?.procedureId ?? null,
         status: pr?.status ?? null,
