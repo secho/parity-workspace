@@ -36,6 +36,27 @@
       "when": 1786022271589,
       "tag": "0004_handy_young_avengers",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1786044420599,
+      "tag": "0005_puzzling_zaladane",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1786082262692,
+      "tag": "0006_striped_lockjaw",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1786095870754,
+      "tag": "0007_overconfident_vargas",
+      "breakpoints": true
     }
   ]
 }

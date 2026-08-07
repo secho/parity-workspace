@@ -1,6 +1,7 @@
 .PHONY: up down remount seed seed-checksum traffic traffic-checksum ingest demo-reset map-estate \
         generate-oracles shadow-db shadow-run implement-service adopt-service service-suite \
-        github-token open-pr \
+        github-token open-pr record-golden replay-check restore-golden load-replay-source \
+        reset-procedure \
         verify-m0 verify-m1 verify-m2 verify-m3 verify-m4 verify-m5 verify-m6 verify-m7
 
 # Waits only for the containers that must exist BEFORE seeding. shop-api's health
@@ -42,13 +43,16 @@ remount:
 	@# serving a stale copy is the M5 failure this whole target exists for, and here it would be
 	@# invisible: /health answers `ok` either way, and the shadow run would replay 400 cases
 	@# against whichever source the process happened to still have in memory.
-	@printf "  artefact "; \
-	 disk=$$(cat parity-platform-demo-app/pricing-service-generated/src/.artifact 2>/dev/null || echo none); \
-	 for port in $${PRICING_SERVICE_GENERATED_PORT:-3301} $${PRICING_SERVICE_LIVE_PORT:-3302}; do \
-	   served=$$(curl -sf http://127.0.0.1:$$port/health | sed -n 's/.*"artifact":"\([^"]*\)".*/\1/p'); \
-	   [ "$$served" = "$$disk" ] || { echo "MISMATCH on $$port: serving $${served:-none}, disk has $$disk"; exit 1; }; \
-	 done; \
-	 echo "$$(echo $$disk | cut -c1-12) ok on both"
+	@for d in parity-platform-demo-app/pricing-service-generated/src/*/; do \
+	   proc=$$(basename $$d); \
+	   [ -f "$$d/.artifact" ] || continue; \
+	   disk=$$(cat "$$d/.artifact"); \
+	   for port in $${PRICING_SERVICE_GENERATED_PORT:-3301} $${PRICING_SERVICE_LIVE_PORT:-3302}; do \
+	     served=$$(curl -sf http://127.0.0.1:$$port/health | python3 -c "import sys,json;print(json.load(sys.stdin).get('artifacts',{}).get('$$proc') or '')"); \
+	     [ "$$served" = "$$disk" ] || { echo "  artefact MISMATCH $$proc on $$port: serving $${served:-none}, disk has $$disk"; exit 1; }; \
+	   done; \
+	   echo "  artefact $$proc $$(echo $$disk | cut -c1-12) ok on both"; \
+	 done
 
 seed:
 	npm --prefix parity-platform-demo-app/seed install --silent
@@ -186,11 +190,76 @@ github-token:
 
 # Assemble the PR. Opening it needs --commit, which the gate never passes: a pull request on a
 # public repository is the one act here that demo-reset cannot take back.
+#
+# PROC=deletion assembles the deletion campaign's PR instead — one change over three procedures,
+# so it is named by what it does rather than by which procedure it belongs to. Its files carry
+# `contents: null`, which becomes a tree entry with `sha: null`: three removals, nothing added.
 open-pr:
 	docker compose exec -T parity-api npx tsx src/cli/open-pr.ts $(PROC) $(COMMIT)
 
 verify-m6:
 	npm --prefix scripts install --silent
 	npm --prefix scripts run verify-m6
+# The recorded golden run: a snapshot of Parity's analysis, which is both what `docs/SPEC.md` §4
+# asks a fresh clone to be able to demo from and what replay mode restores. Read-only against the
+# live database — it captures, it never clears.
+record-golden:
+	npm --prefix scripts install --silent
+	npm --prefix scripts run record-golden
+
+# Restore that snapshot into a SCRATCH database and compare row for row. Proves the round-trip
+# holds before anything relies on it, and never touches the live analysis.
+replay-check:
+	npm --prefix scripts install --silent
+	npm --prefix scripts run replay-check
+
+# Put the recorded analysis back. Clears first, because a data-only restore into populated
+# tables collides on every primary key — and that clearing is exactly what demo-reset does,
+# which is the point: reset and restore are two halves of one mechanism.
+restore-golden:
+	npm --prefix scripts install --silent
+	npm --prefix scripts run restore-golden
+	@# Then re-read the estate. The snapshot carries the invocation counts as they were when it
+	@# was recorded, and the capture keeps growing — every acceptance run tags a few calls of its
+	@# own. `ingest` refreshes estate FACTS and deliberately leaves analysis alone, so this makes
+	@# the restored state internally consistent: analysis from the snapshot, counts from the
+	@# estate. Beat 1 quotes that number off the screen, so it has to be today's.
+	@docker compose exec -T parity-api npx tsx src/cli/ingest.ts
+
+# Build the REPLAY SOURCE: a second Postgres database holding the recorded analysis, which
+# `make demo-reset` cannot reach.
+#
+# This is what makes beat 1 and replay compatible. The recordings ARE the analysis — reset
+# truncates agent_runs and agent_steps with everything else — so recordings kept in the live
+# database could only ever re-show what was already on the screen. Kept somewhere else, the demo
+# can open on an empty estate and still replay every run into it for nothing.
+#
+# Built from the committed snapshot by the same three commands `replay-check` uses. Re-run it
+# after `make record-golden`, and never otherwise: nothing writes to it.
+load-replay-source:
+	npm --prefix scripts install --silent
+	npm --prefix scripts run load-replay-source
+
+# Put ONE procedure back to "nothing analysed yet" and leave the other thirteen alone. This is
+# what makes the lane rehearsable: `demo-reset` is all-or-nothing by design, and re-running a
+# whole estate's analysis costs roughly $16 and most of an hour.
+#
+# KEEP_SERVICE=1 leaves the generated service on disk. That is the usual case when rehearsing
+# the campaign, because regenerating a service is a live Opus run; without it the directory goes
+# too, so the next lane starts from genuinely nothing.
+reset-procedure:
+	@test -n "$(PROC)" || { echo "usage: make reset-procedure PROC=<name> [KEEP_SERVICE=1]"; exit 1; }
+	docker compose exec -T parity-api npx tsx src/cli/reset-procedure.ts "$(PROC)"
+	@if [ -z "$(KEEP_SERVICE)" ]; then \
+	   rm -rf "parity-platform-demo-app/pricing-service-generated/src/$(PROC)"; \
+	   echo "  removed the generated service source (KEEP_SERVICE=1 to keep it)"; \
+	 else \
+	   echo "  kept the generated service source"; \
+	 fi
+
+# M7 acceptance. Spends nothing: every probe here is model-free, the reset and the
+# per-procedure reset are exercised inside transactions that are rolled back, and the gate
+# asserts the estate's total spend did not move while it ran.
 verify-m7:
-	@echo "TODO M7 acceptance"; exit 1
+	npm --prefix scripts install --silent
+	npm --prefix scripts run verify-m7

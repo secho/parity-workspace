@@ -24,7 +24,8 @@ export interface GithubTarget {
 
 export interface CommitFile {
   path: string;
-  contents: string;
+  /** `null` deletes the path. See the tree assembly in `openPullRequest`. */
+  contents: string | null;
 }
 
 export interface OpenedPr {
@@ -92,8 +93,15 @@ export async function openPullRequest(
   const base = await call<{ object: { sha: string } }>(target, `${repo}/git/ref/heads/${input.baseBranch}`);
   const baseCommit = await call<{ tree: { sha: string } }>(target, `${repo}/git/commits/${base.object.sha}`);
 
+  // `contents: null` is a DELETION, and the Git Data API spells it `sha: null` on a tree entry
+  // that names an existing path. There is no delete call to make: a tree is a complete
+  // statement about the paths it mentions, and an entry with a null sha says "not in this
+  // tree". No blob is created for one, which is why this cannot be a uniform map.
   const blobs = await Promise.all(
     input.files.map(async (file) => {
+      if (file.contents === null) {
+        return { path: file.path, mode: '100644' as const, type: 'blob' as const, sha: null };
+      }
       const blob = await call<{ sha: string }>(target, `${repo}/git/blobs`, {
         method: 'POST',
         body: { content: file.contents, encoding: 'utf-8' },

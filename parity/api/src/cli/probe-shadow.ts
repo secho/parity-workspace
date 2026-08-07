@@ -31,7 +31,7 @@ import { selectCases } from '../shadow/cases.js';
 import { readColumns, readTrackedTables } from '../shadow/changetracking.js';
 import { connectShadowRunner, revertShadow, shadowReadiness } from '../shadow/database.js';
 import { diffCase, findings } from '../shadow/diff.js';
-import { releaseService, replayProcedure, type ReplayOutcome } from '../shadow/replay.js';
+import { releaseService, replayProcedure, replayService, serviceHealth, type ReplayOutcome } from '../shadow/replay.js';
 
 const PROC = process.argv[2] ?? 'sp_CalculateOrderTotal';
 const LIMIT = Number(process.argv[3] ?? 120);
@@ -62,7 +62,11 @@ const context = { tracked: await readTrackedTables(pool), columns: await readCol
 await pool.close();
 
 const reset = async (): Promise<void> => {
+  // Both, not just the reference. Once the generated container has served this procedure it
+  // holds a pool, and RESTORE waits on an open connection rather than failing — so missing one
+  // does not produce an error, it produces a probe that hangs forever.
   await releaseService(config.pricingServiceUrl);
+  await releaseService(config.generatedServiceUrl);
   await revertShadow(config);
 };
 
@@ -123,6 +127,7 @@ for (const [index, entry] of aa.entries()) {
 
     perturbation = {
       attempted: true,
+      scope: 'write_set',
       seq: entry.seq,
       sourceInvocationId: entry.sourceInvocationId,
       table,
@@ -136,6 +141,57 @@ for (const [index, entry] of aa.entries()) {
       cleanAgain: diffCase(passA[index], passB[index], { identityColumns }).diffs.every((d) => d.canonicalEqual),
     };
     break;
+  }
+}
+
+/**
+ * The same control, for a procedure that writes nothing.
+ *
+ * `sp_GetCartSummary` produces its answer entirely in result sets, so the write-set loop above
+ * finds nothing to corrupt and reports `attempted: false` — which reads exactly like a pass and
+ * is the failure this whole probe exists to prevent. The output is in a different place, so the
+ * perturbation goes in a different place; the claim being tested is unchanged.
+ */
+if (perturbation.attempted !== true) {
+  for (const [index, entry] of aa.entries()) {
+    if (perturbation.attempted === true) break;
+    const sets = passB[index].resultSets;
+
+    for (const [setIndex, rows] of sets.entries()) {
+      const rowIndex = rows.findIndex(
+        (row) => row !== null && typeof row === 'object' && Object.values(row as object).some((v) => typeof v === 'number'),
+      );
+      if (rowIndex === -1) continue;
+
+      const row = rows[rowIndex] as Record<string, unknown>;
+      const column = Object.keys(row).find((k) => typeof row[k] === 'number')!;
+      const before = row[column] as number;
+
+      const corrupted: ReplayOutcome = {
+        ...passB[index],
+        resultSets: sets.map((set, i) =>
+          i !== setIndex ? set : set.map((r, j) => (j === rowIndex ? { ...(r as object), [column]: before + 1 } : r)),
+        ),
+      };
+
+      const corruptedDiff = diffCase(passA[index], corrupted, { identityColumns });
+      const detected = corruptedDiff.diffs.filter((d) => !d.canonicalEqual);
+
+      perturbation = {
+        attempted: true,
+        scope: 'result_set',
+        seq: entry.seq,
+        sourceInvocationId: entry.sourceInvocationId,
+        table: `rs${setIndex}`,
+        column,
+        before,
+        after: before + 1,
+        detected: detected.length,
+        signatures: detected.map((d) => d.signature),
+        cleanAgain: diffCase(passA[index], passB[index], { identityColumns }).diffs.every((d) => d.canonicalEqual),
+      };
+      break;
+    }
   }
 }
 
@@ -169,6 +225,40 @@ const resultSetProbe = {
       .diffs.filter((d) => d.scope === 'result_set').length === 0,
 };
 
+// --- 4. the shape of what came back, on both implementations ------------------
+//
+// `sp_GetCartSummary` is claimed to be a pure read that answers in two result sets. Both halves
+// of that are measurable rather than assertable, and neither can be read back out of
+// `shadow_cases`: outcomes are stored only for cases that DIFFER, so an all-green run keeps
+// nothing but fingerprints. So the shapes are counted here, where the outcomes are in hand.
+//
+// The service pass is what makes "on both sides" true. Without it this measures the procedure
+// twice and says nothing at all about the replacement — which is the half that matters, because
+// a replacement that quietly wrote something would be the finding of the whole milestone.
+const shapeOf = (outcomes: ReplayOutcome[]): Record<string, number> => ({
+  cases: outcomes.length,
+  minResultSets: Math.min(...outcomes.map((o) => o.resultSets.length)),
+  maxResultSets: Math.max(...outcomes.map((o) => o.resultSets.length)),
+  writtenRows: outcomes.reduce(
+    (sum, o) => sum + Object.values(o.writeSet).reduce((n, images) => n + images.length, 0),
+    0,
+  ),
+  errors: outcomes.filter((o) => o.error !== null).length,
+});
+
+const health = await serviceHealth(config.generatedServiceUrl);
+const served = health?.procedures?.includes(PROC) === true && health.database === config.mssql.shadowDatabase;
+
+let servicePass: Record<string, number> | null = null;
+if (served) {
+  await reset();
+  pool = await connectShadowRunner(config);
+  const passC = await replayService(pool, config.generatedServiceUrl, PROC, first.cases, context);
+  await pool.close();
+  await reset();
+  servicePass = shapeOf(passC);
+}
+
 console.log(
   JSON.stringify(
     {
@@ -177,6 +267,7 @@ console.log(
       strata: first.strata,
       selectionStable,
       resultSetProbe,
+      shape: { procedure: shapeOf(passA), procedureAgain: shapeOf(passB), service: servicePass, serviceServes: served },
       aa: {
         rawDiffs,
         surviving: surviving.length,

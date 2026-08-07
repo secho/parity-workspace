@@ -16,7 +16,9 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const API = `http://127.0.0.1:${process.env.PARITY_API_PORT ?? 3200}`;
-const SRC = join(ROOT, 'parity-platform-demo-app', 'pricing-service-generated', 'src');
+// One directory per procedure. Flat, a second adoption would overwrite the first procedure's
+// files and the container would serve a chimera with nothing in the record to say so.
+const SRC_ROOT = join(ROOT, 'parity-platform-demo-app', 'pricing-service-generated', 'src');
 
 const TARGETS = [
   { name: 'pricing-service-generated', port: process.env.PRICING_SERVICE_GENERATED_PORT ?? '3301' },
@@ -24,6 +26,7 @@ const TARGETS = [
 ];
 
 const procedureName = process.argv[2] ?? 'sp_CalculateOrderTotal';
+const SRC = join(SRC_ROOT, procedureName);
 
 interface ServiceResponse {
   complete: boolean;
@@ -76,10 +79,10 @@ for (const target of TARGETS) {
     try {
       const health = (await (await fetch(`http://127.0.0.1:${target.port}/health`)).json()) as {
         status: string;
-        artifact: string | null;
+        artifacts?: Record<string, string | null>;
       };
-      seen = health.artifact;
-      if (health.status === 'ok' && health.artifact === artifacts.runHash) break;
+      seen = health.artifacts?.[procedureName] ?? null;
+      if (health.status === 'ok' && seen === artifacts.runHash) break;
     } catch {
       // Not up yet, or restarting under tsx watch. Both are expected here.
     }

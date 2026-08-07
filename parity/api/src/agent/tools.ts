@@ -1,5 +1,5 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
-import { and, desc, eq, isNull, ne, or, type SQL } from 'drizzle-orm';
+import { and, desc, eq, isNull, ne, or, sql as raw, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Db } from '../db/client.js';
 import { decisions, diffs, goldenTests, invariants, procedures, shadowRuns, specs } from '../db/schema.js';
@@ -8,7 +8,7 @@ import { connect, readCatalog } from '../ingest/mssql.js';
 import { invariantSpec, unknownIdentifiers, type InvariantSpec } from '../oracle/invariants.js';
 import { runShadow } from '../shadow/run.js';
 import { outcomeSignature } from '../capture/signature.js';
-import { ALLOWED_PATHS, nextAttempt, recordArtifact } from '../service/artifacts.js';
+import { nextAttempt, recordArtifact, serviceFileRefusal } from '../service/artifacts.js';
 import { assemblePr } from '../pr/bundle.js';
 
 /**
@@ -175,7 +175,11 @@ export function parityTools(context: ToolContext) {
           oracleClass: oracle_class,
           riskClass: risk_class,
           seamRequirements: seam_requirements === '' ? null : seam_requirements,
-          campaignStatus: 'specced',
+          // Promote, never demote — the same rule the oracle and shadow ladders already follow.
+          // A flat `'specced'` un-deletes a procedure: run `Smazat mrtvé procedury` and then
+          // `Zmapovat estate`, which is the order beat 2 wants, and triage walks the three dead
+          // ones back from `deleted` to `specced`. Found by rehearsing the beat in that order.
+          campaignStatus: raw`case when ${procedures.campaignStatus} = 'untouched' then 'specced' else ${procedures.campaignStatus} end`,
         })
         .where(eq(procedures.name, context.procedureName));
       return text(`Recorded ${context.procedureName}: ${oracle_class} / ${risk_class}. ${reasoning}`);
@@ -818,9 +822,10 @@ export function parityTools(context: ToolContext) {
     'write_service_file',
     'Write one source file of the replacement service. Only the business-logic files are writable; the HTTP shell belongs to the migration harness.',
     {
-      path: z
-        .enum(ALLOWED_PATHS)
-        .describe('Which file, relative to the service src/. pricing.ts computes, persist.ts writes.'),
+      // z.string(), not z.enum: the allowed set depends on which procedure the run is for, and
+      // a schema cannot see that. The refusal below is the enforcement — and it is a better one,
+      // because zod would have thrown an opaque schema error the agent could not act on.
+      path: z.string().describe('Which file, relative to the service src/ directory for this procedure.'),
       contents: z.string().describe('The complete file. Node 22 + TypeScript, ESM, importing only fastify and mssql.'),
     },
     async ({ path, contents }) => {
@@ -828,16 +833,12 @@ export function parityTools(context: ToolContext) {
       const [row] = await context.db.select().from(procedures).where(eq(procedures.name, context.procedureName));
       if (row === undefined) return text(`No procedure named ${context.procedureName}.`);
 
-      // Imports are checked here too. The container installs its dependencies at build time,
-      // so a service that reaches for a package nobody installed does not fail at review — it
-      // fails four hundred replay cases into a shadow run, as a connection refused.
-      const imported = [...contents.matchAll(/^\s*import\s[^;]*?from\s+['"]([^'"]+)['"]/gm)].map((m) => m[1]);
-      const foreign = imported.filter((s) => !s.startsWith('.') && !s.startsWith('node:') && s !== 'fastify' && s !== 'mssql');
-      if (foreign.length > 0) {
-        return text(
-          `Refused: ${path} imports ${foreign.join(', ')}. The service container installs only fastify and mssql at build time, so nothing else can resolve at runtime. Rewrite using those two and the Node standard library.`,
-        );
-      }
+      // Both refusals live in `service/artifacts.ts` so that a gate can exercise the real
+      // decision without a live model run. This is the whole enforcement — the schema takes a
+      // plain string, because which paths are allowed depends on the run's procedure and a
+      // schema cannot see that.
+      const refusal = serviceFileRefusal(context.procedureName, path, contents);
+      if (refusal !== null) return text(refusal);
 
       const attempt = context.serviceAttempt ?? (await nextAttempt(context.db, row.id));
       const stored = await recordArtifact(context.db, {

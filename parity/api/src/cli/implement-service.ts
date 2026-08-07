@@ -13,6 +13,7 @@ import { openStore, waitForPostgres } from '../db/client.js';
 import { applyMigrations } from '../db/migrate.js';
 import { seedPolicy } from '../agent/policy.js';
 import { agentReadiness, loadConfig } from '../env.js';
+import { announceMode, loadMode } from '../replay/mode.js';
 import { generateService } from '../service/generate.js';
 
 const config = loadConfig();
@@ -34,6 +35,8 @@ const feedback = (process.env.PARITY_SERVICE_FEEDBACK ?? '') === '' ? null : pro
 const store = openStore(config.pgUrl);
 await waitForPostgres(store.pool);
 await applyMigrations(store.db);
+await loadMode(store.db);
+announceMode(config);
 await seedPolicy(store.db);
 
 console.log(`implement-service on ${procedureName}${feedback === null ? '' : ' (with feedback from the previous attempt)'}`);

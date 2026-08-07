@@ -3,6 +3,8 @@ import { eq } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { agentRuns, agentSteps, auditEntries, procedures } from '../db/schema.js';
 import type { Config } from '../env.js';
+import { replayAgentRun } from '../replay/serve.js';
+import { isReplay } from '../replay/mode.js';
 import { llmEndpoint, runSkill, type RunResult } from './client.js';
 import { buildHooks } from './hooks.js';
 import { loadPolicy } from './policy.js';
@@ -34,6 +36,15 @@ export interface RunHandle {
   agentRunId: number;
   result: RunResult;
   blocked: { toolName: string; reason: string }[];
+  /**
+   * Replay only: which artefact tables the run re-materialised, and how many rows into each.
+   *
+   * A live run leaves this undefined — it wrote its artefacts through its tools, and the audit
+   * log is the record of that. A replayed run copies them from the replay source, and this is how
+   * `verify-m7` reads back that a replayed `extract-spec` produced a specification rather than
+   * nine steps and an empty tab.
+   */
+  materialised?: Record<string, number>;
 }
 
 export async function executeRun(
@@ -44,6 +55,12 @@ export async function executeRun(
   /** Extra context the write tools need. Only `implement-service` uses it so far. */
   extra?: { serviceAttempt?: number },
 ): Promise<RunHandle> {
+  // Replay is decided here, before a workspace is built or a skill is read, because every line
+  // below this one exists to reach a model. Everything a caller can observe — the run row, the
+  // steps arriving on the SSE stream at the recorded cadence, the handle that comes back — is
+  // the same shape; what differs is that nothing is spent and the row says `replayed_from`.
+  if (isReplay(config)) return replayAgentRun(db, config, request, onStep);
+
   const skills = await loadSkills(config.skillsDir);
   const skill = await findSkill(config.skillsDir, request.skillName);
   const runId = randomUUID();

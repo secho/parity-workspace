@@ -4,6 +4,8 @@ import { decisions, diffs as diffsTable, procedures, shadowCases, shadowRuns } f
 import type { Config } from '../env.js';
 import { connect } from '../ingest/mssql.js';
 import { readIdentityColumns, readParameters } from '../oracle/execute.js';
+import { replayShadowRun } from '../replay/serve.js';
+import { isReplay } from '../replay/mode.js';
 import { selectCases, DEFAULT_CASE_LIMIT } from './cases.js';
 import { readColumns, readTrackedTables } from './changetracking.js';
 import { connectShadowRunner, revertShadow, shadowReadiness } from './database.js';
@@ -65,9 +67,27 @@ export interface ShadowResult {
   /** Derived from the target's /health, including the artefact hash it is serving. */
   implementation: string;
   implementationId: string;
+  /** Set only in replay mode: the recorded run this one re-materialised. */
+  replayedFrom?: number | null;
 }
 
 export async function runShadow(db: Db, config: Config, options: ShadowOptions): Promise<ShadowResult> {
+  // `PARITY_MODE=replay`, decided before anything opens a connection. That is not an
+  // optimisation: the claim a replayed run makes is that both database fingerprints are
+  // untouched, and the only way to make it true rather than argued is to never connect.
+  if (isReplay(config)) {
+    const replayed = await replayShadowRun(db, config, options);
+    if ((options.kind ?? 'shadow') !== 'aa') {
+      await promoteAfterShadow(
+        db,
+        replayed.procedureId,
+        replayed.result.implementationId as ShadowImplementation,
+        replayed.findingCount,
+      );
+    }
+    return replayed.result;
+  }
+
   const started = Date.now();
   const kind: ShadowKind = options.kind ?? 'shadow';
   const limit = options.limit ?? DEFAULT_CASE_LIMIT;
@@ -116,6 +136,16 @@ export async function runShadow(db: Db, config: Config, options: ShadowOptions):
           (health.status === 'awaiting_artifact' ? '. Run `make implement-service && make adopt-service`.' : ''),
       );
     }
+    // Asked before a single case is replayed. Without it, a procedure this instance does not
+    // serve gets 503 on every case, and the diff engine records each one as a behavioural
+    // difference on a run whose status still reads `succeeded`.
+    if (health.procedures !== undefined && !health.procedures.includes(options.procedureName)) {
+      throw new Error(
+        `${implementationId} service does not serve ${options.procedureName} — it has ${
+          health.procedures.length === 0 ? 'no adopted implementation' : health.procedures.join(', ')
+        }`,
+      );
+    }
     if (health.database !== config.mssql.shadowDatabase) {
       // The claim the whole milestone rests on. A replacement pointed at the estate would be
       // writing to production while the run reported it was not.
@@ -123,7 +153,7 @@ export async function runShadow(db: Db, config: Config, options: ShadowOptions):
     }
     implementation =
       implementationId === 'generated'
-        ? `pricing-service-generated (agent, artefact ${health.artifact?.slice(0, 12) ?? 'unknown'})`
+        ? `pricing-service-generated (agent, artefact ${health.artifacts?.[options.procedureName]?.slice(0, 12) ?? 'unknown'})`
         : 'pricing-service (hand-written, M5 reference)';
   }
 
@@ -265,19 +295,30 @@ const LADDER = ['none', 'golden', 'invariants', 'shadow', 'proven'] as const;
 /**
  * Where a procedure stands after a shadow run.
  *
- * `shadow` is earned by the fact of a run. `proven` needs three things at once and is refused
+ * `shadow` is earned by the fact of a run. `proven` needs four things at once and is refused
  * if any is missing:
  *
  *  1. the run was against the **generated** service, not the reference — the reference is the
  *     control, and a control going green would mean the harness had stopped working, not that
  *     the estate had been migrated;
  *  2. the run surfaced **no findings at all**;
- *  3. every behavioural difference the reference run found has a **recorded decision**.
+ *  3. a **reference implementation has been replayed at all**, so that a green run is green
+ *     against something, rather than green in the absence of anything;
+ *  4. every behavioural difference that reference run found has a **recorded decision**.
  *
- * The third is the one worth arguing for. A green run against an implementation that simply
- * reproduces everything is not proof that anyone agreed to anything — it is proof that nothing
- * changed. `proven` is a claim about a decision having been taken, so the decision is part of
- * what earns it. Beat 4 of the demo is exactly this: the click is what moves the estate.
+ * The last two are the ones worth arguing for. A green run against an implementation that
+ * simply reproduces everything is not proof that anyone agreed to anything — it is proof that
+ * nothing changed. `proven` is a claim about a decision having been taken, so the decision is
+ * part of what earns it.
+ *
+ * The third condition was added at M7 after `sp_GetCartSummary` earned `proven` on its first
+ * green run. It has no hand-written reference, so condition 4 had nothing to quantify over and
+ * passed **vacuously** — the ladder handed out its top rung for an empty set. That is exactly
+ * the failure mode M1 and M2 each shipped once: an assertion that cannot fail.
+ *
+ * The refusal is also the better story. "The lane ran end to end, and the platform declines to
+ * call it proven because nothing here has ever been shown to diverge" demonstrates a rung a
+ * machine cannot climb on its own. A second green badge demonstrates nothing.
  *
  * Promote, never demote — the same rule and the same reason as the oracle's ladder.
  */
@@ -293,6 +334,20 @@ async function promoteAfterShadow(
   let earned: (typeof LADDER)[number] = 'shadow';
 
   if (implementationId === 'generated' && findingCount === 0) {
+    // Is there a control at all? Without one, the query below quantifies over an empty set and
+    // returns "nothing undecided" for a procedure nobody has ever compared against anything.
+    const control = await db
+      .select({ id: shadowRuns.id })
+      .from(shadowRuns)
+      .where(
+        and(
+          eq(shadowRuns.procedureId, procedureId),
+          eq(shadowRuns.implementationId, 'reference'),
+          eq(shadowRuns.status, 'succeeded'),
+        ),
+      )
+      .limit(1);
+
     const open = await db
       .select({ signature: diffsTable.signature })
       .from(diffsTable)
@@ -310,7 +365,7 @@ async function promoteAfterShadow(
       )
       .limit(1);
 
-    if (open.length === 0) earned = 'proven';
+    if (control.length > 0 && open.length === 0) earned = 'proven';
   }
 
   if (LADDER.indexOf(current.oracleState as (typeof LADDER)[number]) >= LADDER.indexOf(earned)) return;

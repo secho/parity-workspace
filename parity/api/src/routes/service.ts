@@ -4,6 +4,7 @@ import type { Db } from '../db/client.js';
 import { procedures, pullRequests } from '../db/schema.js';
 import { agentReadiness, prReadiness, type Config } from '../env.js';
 import { assemblePr, commitPr } from '../pr/bundle.js';
+import { assembleDeletionPr, commitDeletionPr } from '../pr/deletion.js';
 import { generateService } from '../service/generate.js';
 import { isComplete, latestArtifacts } from '../service/artifacts.js';
 
@@ -24,7 +25,7 @@ export async function serviceRoutes(app: FastifyInstance, db: Db, config: Config
     return {
       procedure: procedure.name,
       artifacts,
-      complete: isComplete(artifacts),
+      complete: isComplete(procedure.name, artifacts),
       agentReady: agentReadiness(),
     };
   });
@@ -50,6 +51,28 @@ export async function serviceRoutes(app: FastifyInstance, db: Db, config: Config
       return result;
     },
   );
+
+  /**
+   * The deletion campaign's PR — assembled, and opened only when asked in so many words.
+   *
+   * Its own route because it belongs to three procedures rather than one, so it cannot be reached
+   * through `/api/procedures/:name/pr`. Same rule in front of it: `commit: true` is the only way
+   * anything is pushed, and the tier table refuses `open_pr` to every task class, so the thing
+   * that sets it always has a person behind it.
+   */
+  app.post<{ Body: { commit?: boolean } }>('/api/pr/deletion', async (req, reply) => {
+    const assembled = await assembleDeletionPr(db, config);
+    if (assembled === null) {
+      return reply.code(409).send({ error: 'nothing to assemble — no procedure is marked `deleted`' });
+    }
+    if (req.body?.commit !== true) return { pullRequest: assembled, opened: false, readiness: prReadiness(config) };
+
+    const readiness = prReadiness(config);
+    if (!readiness.ready) return reply.code(503).send({ error: readiness.reason, reasonCode: readiness.reasonCode });
+
+    const opened = await commitDeletionPr(db, config);
+    return { pullRequest: opened, opened: opened?.status === 'open', readiness };
+  });
 
   /** The PR as assembled, plus whether it could be opened at all. */
   app.get<{ Params: { name: string } }>('/api/procedures/:name/pr', async (req, reply) => {

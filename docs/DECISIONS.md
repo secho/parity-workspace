@@ -1347,3 +1347,254 @@ vanishes from the shadow run. Seed and traffic are pinned to `DEMO_EPOCH`, but t
 reads the live server clock on both sides, so the demo is correct until the end of 2026 and
 silently degrades afterwards. Recorded here because M6 is the last milestone positioned to
 notice it.
+
+## 2026-08-06 · Replay serves recordings from the live tables, not from a parallel store
+The plan considered `recorded_*` tables that `resetState` would not touch. They were not built,
+and the reason is that the snapshot makes them redundant: `make restore-golden` puts the whole
+recorded analysis back in two seconds, so after a reset the recordings are there again along with
+the artefacts they produced. A parallel store would have to be kept in sync with the real one and
+would answer a question — "what did this run do?" — that the real tables already answer. Replay
+therefore means: find the newest **non-replayed** succeeded run of this skill for this procedure,
+and re-materialise it. `agent_runs.replayed_from IS NULL` is what stops a rehearsal from replaying
+a replay of a replay.
+
+## 2026-08-06 · A replayed run writes rows, progressively — it does not stream a phantom
+The obvious implementation of replay pushes the recorded steps down the SSE stream and writes
+nothing. It produces a completely empty screen. `Procedure.tsx` treats the SSE event as a *signal
+to refetch* and discards the payload, so the table is the interface: the rows are written as the
+replay proceeds and the event goes out **after** the insert. This is also why `playRecording`'s
+emit callback is awaited.
+
+## 2026-08-06 · A replayed run carries the model but not the cost
+`cost_usd` and the token counts stay NULL on a replayed row, while the model, the turn count and
+the output are copied. The row is a real record of something that really happened — a replay —
+and the one column that measures whether replay is doing what it claims is the spend. `verify-m7`
+reads the estate's total before and after and requires it not to move; copying the recorded cost
+would make that check fail, and it would be a lie in exactly the wrong place. No audit rows either:
+the audit log falls out of `PostToolUse`, no hook fired, and inventing entries would break the
+claim that nothing in it is instrumented by hand.
+
+## 2026-08-06 · `promoteAfterShadow` requires a reference run before granting `proven`
+`sp_GetCartSummary` earned `proven` on its first green run. It has no hand-written reference
+implementation, so the condition "every behavioural difference the reference run found has a
+recorded decision" quantified over an empty set and passed vacuously — the ladder handed out its
+top rung for nothing, which is the failure mode M1 and M2 each shipped once. The ladder now also
+requires a succeeded `reference` run to exist. The refusal is the better story: the lane ran end
+to end and the platform declines to call it proven, because nothing here has ever been shown to
+diverge.
+
+## 2026-08-06 · `campaign_runs` is one table with an `items` array
+Not `campaigns` + `campaign_items`. There are exactly three campaigns and their definitions are
+code, so a `campaigns` table would be a table with three hardcoded rows behind three functions.
+Item state is the opposite case: the deletion campaign produces no agent runs at all, so "which
+items are done" cannot be derived from anything — which is precisely when storing it is right.
+The same test `blocker` passes in the other direction.
+
+## 2026-08-06 · Campaigns skip completed items
+Ten lines, three reasons: rehearsable, idempotent for the gate, and honest about beat 2's timing.
+`Zmapovat estate` is 28 model runs and $7.12; that does not fit in a two-minute beat and no amount
+of choreography will make it. Started on a mapped estate the same button finishes in 266 ms and
+reports *14 přeskočeno*, which is true. The probe that checks this **refuses to run** when the
+estate is not fully mapped — a gate that could accidentally spend $7 is a gate that eventually
+does.
+
+## 2026-08-06 · The deletion PR has a NULL `procedure_id`, so `resetState` names `pull_requests`
+It removes three procedures at once and belongs to none of them. The consequence is easy to miss:
+a NULL foreign key does not cascade, so the row survives `TRUNCATE procedures` and beat 1 would
+open with yesterday's deletion PR still assembled. `resetState` therefore names `pull_requests`
+and `campaign_runs` explicitly — `campaign_runs` has no foreign key at all — and `verify-m7`
+checks the list empirically rather than by reading it: it truncates what the reset truncates
+inside a transaction it rolls back, and requires the set of tables still holding rows to be
+exactly `{policy_rules}`.
+
+## 2026-08-06 · A deletion is a tree entry with `sha: null`
+No delete call, no second code path. A git tree is a complete statement about the paths it
+mentions, so an entry naming an existing path with a null sha says "not in this tree". `CommitFile`
+gained `contents: string | null` and the blob loop skips blob creation for a null. This is the one
+M7 claim asserted by construction rather than by exercise: the gate checks the assembled tree, and
+the API call itself only happens when a person runs `make open-pr PROC=deletion --commit`.
+
+## 2026-08-06 · `verify-m7` runs destructive code inside transactions it rolls back
+Both resets are real code paths with real consequences — `demo-reset` costs $16 of analysis to
+undo, `reset-procedure` costs $1.39. Reading the table list out of the source and agreeing with it
+is not a check, it is a second copy of the same opinion. TRUNCATE and DELETE are both transactional
+in Postgres, so the gate runs the actual functions, measures what happened, and rolls back. The
+probes also clean up the two replays they create, so the gate leaves the database exactly as it
+found it — otherwise every acceptance run would invalidate the committed snapshot it had just
+verified.
+
+## 2026-08-06 · The demo script's numbers are checked against Postgres on every gate run
+`verify-m7` §9 reads `docs/DEMO-SCRIPT.md` and requires the figures in beats 3 and 4 to be the
+ones in the database, compared with whitespace flattened so that a non-breaking thousands
+separator is not mistaken for a wrong number. This build has shipped a stale demo number twice.
+A number in that file is now a claim the gate enforces.
+
+## 2026-08-06 · Four audit outcomes, four labels
+`Provoz.tsx` rendered anything that was not `blocked` as a green *povoleno* chip, so `denied` (the
+SDK refusing a tool that is not in `allowedTools`) and `failed` (the call erroring) both displayed
+as successes — 54 of 521 rows saying the opposite of what happened. The two refusals are red with
+different labels naming which gate said no; `failed` is amber, because the call happened.
+
+## 2026-08-06 · `PARITY_MODE` is on the badge in both directions
+It used to show only when it was not `live`. That makes the most likely on-stage failure —
+running a stretch in the wrong mode — invisible in exactly one direction: a replayed beat
+announced itself, and a beat that was meant to be replayed and quietly went live did not.
+`LIVE` is grey, `REPLAY` is amber and boxed, and both are always on screen.
+
+## 2026-08-06 · The replay source is a second database, and the earlier decision was wrong
+Two entries above, replay was recorded as reading recordings out of the live tables, on the
+grounds that `make restore-golden` puts them back after a reset. That holds right up to the
+question anyone actually asks: *can beat 1 open on an empty estate and beats 2–4 still be
+replayed?* No — the recordings ARE the analysis, `resetState` truncates `agent_runs` and
+`agent_steps` with everything else, and a replay reading from the live database can therefore only
+ever re-show what is already on screen. The plan's original `recorded_*` tables existed for exactly
+this and should not have been dropped.
+
+They come back as `parity_replay`, a second database built by `make load-replay-source` from the
+committed snapshot — the same three commands `replay-check` uses, so the database replay reads from
+is built identically to the one the round-trip is proven against. Nothing writes to it. It is
+opened lazily, so a stack running `PARITY_MODE=live` never needs it to exist.
+
+Measured from a genuinely blank estate: the whole `Zmapovat estate` campaign replays in 94 s for
+$0.00, and the migration lane on one procedure in 15 s. Live those are an hour and $9, and five
+minutes per procedure.
+
+## 2026-08-06 · A replayed run re-materialises what it produced, not just its transcript
+The obvious shape of replay re-emits steps. That gives you a step stream and an empty Specifikace
+tab, because `runner.ts` truncates every tool input to 2 000 characters — the `write_spec` step in
+a recording carries 2 000 characters of a specification that is 15 368 long. So each skill declares
+what it writes and a replayed run copies exactly that for exactly that procedure: the spec, the
+golden cases and invariants, the service artefacts, and triage's classification. `verify-m7` §10
+compares the materialised specification to the recorded one **byte for byte** from a reset
+database, because a length check would pass on the truncated copy the transcript really does carry.
+
+Three rules hold it together. Identity across the two databases is **by name**, never by id, since
+`demo-reset` re-ingests and assigns fresh ids. `agent_run_id` on a copied artefact points at the
+**replay**, not at the recording — the recorded run does not exist in the live database and the row
+is genuinely the output of the run now on screen. And nothing copied moves the ladder:
+`oracle_state` is still promoted by `promoteAfterOracle` and `promoteAfterShadow` from executions
+that really happen, because recording a baseline runs the procedure and that costs nothing.
+
+## 2026-08-06 · `replayed_from` is not a foreign key
+It holds an id from the replay source. A foreign key cannot express a cross-database reference, and
+the constraint that existed while the two were one database was dropped at M7 rather than kept as
+something that happened to hold. The first replay after the source moved failed on it immediately,
+which is the good version of finding out.
+
+## 2026-08-06 · `write_triage` promotes campaign_status, never demotes it
+Beat 2 runs `Smazat mrtvé procedury` first, because it is the one that finishes in front of the
+room, and `Zmapovat estate` second. Triage then set `campaign_status = 'specced'` flat, which
+walked the three dead procedures back from `deleted` — the estate un-deleted them thirty seconds
+after the presenter said they were going. Same rule as both ladders now: promote, never demote,
+written as a `CASE` so it is one statement. Live behaviour, not a replay artefact; found by
+rehearsing beat 2 in the order the script actually uses.
+
+## 2026-08-06 · The policy probes force `mode: 'live'`
+`probe-decision`, `probe-pr` and `probe-policy` exist to prove that a real agent really reaching
+for a tool it is not allowed is really refused by the `PreToolUse` hook. Replayed, they reach for
+nothing and are refused nothing — and report a pass, which is the one outcome a control must not
+be able to produce by accident. Found on a stack left in replay mode after a rehearsal, where
+`verify-m6` went 77/80 for a reason that had nothing to do with the policy table.
+
+## 2026-08-06 · `make restore-golden` re-ingests
+The snapshot carries the invocation counts of the day it was recorded, and the capture keeps
+growing — every acceptance run tags a few calls of its own. `ingest` refreshes estate facts and
+deliberately leaves analysis alone, so restoring and then re-ingesting gives a state that is
+internally consistent: analysis from the snapshot, counts from the estate. Beat 1 reads that
+number off the screen, so it has to be today's.
+
+## 2026-08-06 · The gates are order-dependent, and that is documented rather than fixed
+`verify-m2` is written for the estate M2 had — nothing analysed — and three of its checks
+legitimately fail against a restored one: two coverage assertions and a probe that moves
+`oracle_state` and expects the blocker to follow. It also ends by running `demo-reset`, so the
+order that works is `verify-m2 → restore-golden → verify-m6 → verify-m7`. Making those three
+checks tolerate an analysed estate would weaken them; the sequence is in the demo script's
+pre-flight instead.
+
+## 2026-08-06 · The presenter's page is at `/rezie` and is not in the sidebar
+Every beat of the demo already had a way to run it — a `make` target, a curl, a campaign button.
+What did not exist was one surface that runs them in order and says which have happened, and the
+cost of that was a terminal on screen during a customer demo and a presenter remembering what
+comes next.
+
+It was absent from the navigation at first, on the reasoning that `Estate · Kampaně · Fronta ·
+Provoz` is what a customer is meant to look at and a fifth item reading *Režie* tells the room the
+demo is choreographed before the first beat lands. That reasoning still holds, but it made the
+page unfindable — the first question after it shipped was "kde jsou ta tlačítka". So it is in the
+sidebar, below a divider, at 10px in `--text-faint`: findable by someone looking for it,
+unreadable from the fifth row. The taste argument was right and the discoverability cost was
+mine to have noticed.
+
+Two rules it inherits rather than invents. **Every button posts to the endpoint that already
+existed**, with the body the `make` target already passed, so the page is a remote control and not
+a second implementation of the choreography — if it drifted from `DEMO-SCRIPT.md` there would be
+no way to tell which was right. And **`done` is derived on every read** from the same rows the
+screens read, never a checklist the page ticks: reload mid-demo, or hand the laptop to someone
+else, and it still knows where you are.
+
+Building it exposed two gaps worth naming: the shadow-run route could not select an
+implementation, so beat 4's green run needed a shell, and the deletion PR had no route at all
+because it belongs to three procedures rather than one.
+
+## 2026-08-07 · The runtime mode is persisted, and the commands announce it
+The switch started as an in-memory override on the grounds that the environment should stay the
+source of truth. That was wrong twice in one afternoon. The container runs `tsx watch`, so any
+source edit restarts the API process and the mode reverted to `PARITY_MODE` **silently** — the next
+campaign ran live, at five minutes and $0,65 per procedure, on a stack whose badge had read REPLAY
+a moment earlier. And `make shadow-run` read the environment directly while the UI said replay,
+which cost $0,71 of `classify-diff` nobody asked for.
+
+So it lives in `runtime_settings`, one row, treated like `policy_rules`: configuration, not state.
+`resetState()` does not clear it, the snapshot does not carry it, and `verify-m7` excludes it from
+the "everything a reset empties" check by name. Every command that can spend loads it and then
+says which mode it is in before doing anything. A probe that forces a mode still wins, because it
+builds its own `Config` and never calls `loadMode` — so the gates stay immune to whatever the
+running app is set to, which was the property worth protecting in the first place.
+
+A setting worth putting a switch on is a setting worth surviving a restart. The original entry
+below is kept because its three conditions still hold; only the second one changed.
+
+## 2026-08-06 · `PARITY_MODE` is switchable at runtime, from `/rezie`
+The flag started as an environment variable, and for a gate that is right. For a stage it is not:
+the demo is entirely replayed — live, mapping the estate is an hour and about $9 — so the single
+setting that decides whether the next click costs nothing or costs an hour was the one thing a
+presenter could not change without a terminal and a container restart.
+
+Three things keep the switch honest. Everything that decides reads the **effective** value through
+`isReplay()` — the runner, the shadow harness, the classifier and `/api/runtime` — so the badge in
+the corner cannot say `LIVE` while runs are being replayed; a flag that could be overridden without
+the display following would be worse than no switch. It does **not persist**: after a restart
+`PARITY_MODE` wins again, so the environment stays the source of truth for how the stack is
+configured and this is explicitly an override for one session, which the page says. And CLI
+processes never touch it — they build their own `Config`, `probe-replay` forcing replay and
+`probe-decision` forcing live — so the gate is unaffected by whatever the running API is set to,
+which is the property that matters most.
+
+Switching *to* replay opens the replay source first and refuses with the command that fixes it. A
+missing source is the most likely way this is misconfigured, and the moment to discover that is
+when the switch is flipped, not four beats later.
+
+## 2026-08-06 · Every screen polls; nothing waits for a reload
+Each screen was a snapshot taken at mount, which was fine while every action started on the screen
+that showed its result. It stopped being fine the moment `/rezie` could fire a beat, a campaign
+could run in the background, and a decision could be taken in another window: the only way to see
+the estate move was F5, and on a stage that reads as a broken app rather than as a page that has
+not been told.
+
+`usePoll` is deliberately dumb — no websockets, no cache invalidation, no dependency on which
+screen started the work. Every query behind it is a handful of indexed reads against a Postgres on
+localhost, and one every two seconds is cheaper than the SSE topic it would take to do this
+properly. It also cannot get out of sync with what happened, because it re-asks rather than being
+told. It skips hidden tabs and never overlaps itself.
+
+## 2026-08-06 · The service the agent wrote is visible on its own tab
+`implement-service` is the most expensive run in the platform and the one the demo talks about
+most, and its output was in `service_artifacts` and nowhere on screen — visible only indirectly,
+as a file list inside a PR that had to be assembled first. So after beat 4b there was literally
+nothing to show. The `Služba` tab renders the files as the agent wrote them, with each sha256 and
+the set hash the running container reports at `/health`.
+
+## 2026-08-06 · Assembling the migration PR is its own beat
+There was no beat for it, so the PR tab was empty at the end of a run-through and the demo's
+closing move had nothing behind it. It is beat 4d, and it must come after the green run because
+the body quotes that run's numbers — which is also why it cannot be folded into 4b.

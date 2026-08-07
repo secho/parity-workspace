@@ -39,6 +39,63 @@ import { serviceArtifacts } from '../db/schema.js';
  */
 export const ALLOWED_PATHS = ['pricing.ts', 'persist.ts'] as const;
 
+/**
+ * What each procedure's service is made of.
+ *
+ * Per procedure rather than one global list, because the shape of the answer differs:
+ * `sp_CalculateOrderTotal` computes and then writes, so it has two modules;
+ * `sp_GetCartSummary` writes nothing at all, so a `persist.ts` would be an empty file the
+ * adoption check would then wait for forever. `isComplete` is the quiet failure here — with a
+ * global list, adopting a lone `summary.ts` reads as "missing persist.ts", which is a true
+ * sentence about the wrong thing.
+ *
+ * These names are also what `index.ts`'s adapter table imports, so the two must agree. They are
+ * stated in both places on purpose: this one is enforced when the agent writes, that one when
+ * the service loads, and a mismatch is caught at adoption rather than at replay.
+ */
+const PATHS: Record<string, readonly string[]> = {
+  sp_CalculateOrderTotal: ['pricing.ts', 'persist.ts'],
+  sp_GetCartSummary: ['summary.ts'],
+};
+
+export function allowedPathsFor(procedureName: string): readonly string[] {
+  return PATHS[procedureName] ?? ALLOWED_PATHS;
+}
+
+/**
+ * Whether `write_service_file` may write this, and if not, what to tell the agent.
+ *
+ * Lifted out of the tool handler so that a gate can exercise the real decision without a live
+ * model run — the same move `probe-oracle` makes when it corrupts a stored expectation. Both
+ * refusals are here rather than one here and one in the tool, because a rule that is checked in
+ * two places is a rule that gets changed in one of them.
+ *
+ * Returns null when the write is allowed.
+ */
+export function serviceFileRefusal(procedureName: string, path: string, contents: string): string | null {
+  const allowed = allowedPathsFor(procedureName);
+  if (!allowed.includes(path)) {
+    return (
+      `Refused: ${path} is not part of ${procedureName}'s service. Write ${allowed.join(' and ')} — ` +
+      "index.ts and db.ts are the migration harness's contract and belong to the platform."
+    );
+  }
+
+  // Imports are checked here too. The container installs its dependencies at build time, so a
+  // service that reaches for a package nobody installed does not fail at review — it fails four
+  // hundred replay cases into a shadow run, as a connection refused.
+  const imported = [...contents.matchAll(/^\s*import\s[^;]*?from\s+['"]([^'"]+)['"]/gm)].map((m) => m[1]);
+  const foreign = imported.filter((s) => !s.startsWith('.') && !s.startsWith('node:') && s !== 'fastify' && s !== 'mssql');
+  if (foreign.length > 0) {
+    return (
+      `Refused: ${path} imports ${foreign.join(', ')}. The service container installs only fastify and mssql at ` +
+      'build time, so nothing else can resolve at runtime. Rewrite using those two and the Node standard library.'
+    );
+  }
+
+  return null;
+}
+
 export interface ArtifactFile {
   path: string;
   contents: string;
@@ -67,8 +124,8 @@ export function hashSet(files: { path: string; sha256: string }[]): string {
   return sha256(ordered.map((f) => `${f.path}\0${f.sha256}`).join('\0\0'));
 }
 
-export function isAllowedPath(path: string): boolean {
-  return (ALLOWED_PATHS as readonly string[]).includes(path);
+export function isAllowedPath(procedureName: string, path: string): boolean {
+  return allowedPathsFor(procedureName).includes(path);
 }
 
 /** The attempt number a new run should write under: one past the highest already stored. */
@@ -157,8 +214,8 @@ export async function latestArtifacts(db: Db, procedureId: number): Promise<Arti
  * keep serving whichever file the last attempt left behind, and the shadow run would compare
  * the procedure against a chimera of two attempts with no way to tell from the recorded row.
  */
-export function isComplete(set: ArtifactSet | null): set is ArtifactSet {
+export function isComplete(procedureName: string, set: ArtifactSet | null): set is ArtifactSet {
   if (set === null) return false;
   const written = new Set(set.files.map((f) => f.path));
-  return ALLOWED_PATHS.every((p) => written.has(p));
+  return allowedPathsFor(procedureName).every((p) => written.has(p));
 }

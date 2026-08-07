@@ -24,6 +24,9 @@ import { openPullRequest, type CommitFile } from './github.js';
 const MIGRATION_DOCS = 'docs/migrations';
 const SERVICE_SRC = 'parity-platform-demo-app/pricing-service-generated/src';
 
+/** One directory per procedure, so two migrations never write over each other's files. */
+const serviceSrcFor = (procedureName: string): string => `${SERVICE_SRC}/${procedureName}`;
+
 export interface AssembleInput {
   procedureName: string;
   summaryCs: string;
@@ -45,7 +48,7 @@ export async function assemblePr(db: Db, config: Config, input: AssembleInput): 
   if (procedure === undefined) return null;
 
   const artifacts = await latestArtifacts(db, procedure.id);
-  if (!isComplete(artifacts)) return null;
+  if (!isComplete(procedure.name, artifacts)) return null;
 
   const [spec] = await db.select().from(specs).where(eq(specs.procedureId, procedure.id));
   const cases = await db.select().from(goldenTests).where(eq(goldenTests.procedureId, procedure.id));
@@ -95,7 +98,7 @@ export async function assemblePr(db: Db, config: Config, input: AssembleInput): 
     .limit(1);
 
   const files: CommitFile[] = [
-    ...artifacts.files.map((f) => ({ path: `${SERVICE_SRC}/${f.path}`, contents: f.contents })),
+    ...artifacts.files.map((f) => ({ path: `${serviceSrcFor(procedure.name)}/${f.path}`, contents: f.contents })),
     {
       path: `${MIGRATION_DOCS}/${procedure.name}/spec.md`,
       contents: spec?.markdown ?? `# ${procedure.name}\n\nSpecifikace zatím nebyla vygenerována.\n`,
@@ -152,6 +155,17 @@ export async function commitPr(db: Db, config: Config, procedureName: string): P
     .orderBy(desc(pullRequests.id))
     .limit(1);
   if (row === undefined) return null;
+  return openRow(db, config, row);
+}
+
+/**
+ * Push one assembled row, whatever it is a PR for.
+ *
+ * Split out at M7 because the deletion PR belongs to three procedures rather than to one, so it
+ * cannot be found by procedure — but it is opened by exactly the same act, with exactly the same
+ * rule in front of it: something with a person behind it asked.
+ */
+export async function openRow(db: Db, config: Config, row: PullRequest): Promise<PullRequest | null> {
   if (row.status === 'open' && row.url !== null) return row;
 
   try {

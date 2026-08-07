@@ -10,6 +10,7 @@ import {
   type Runtime,
   type SkillInfo,
 } from '../lib/api';
+import { usePoll } from '../lib/poll';
 
 /**
  * Skills, policy tiers and the audit log on one page — SCHEDULE folded the three separate
@@ -21,12 +22,22 @@ export function Provoz(): JSX.Element {
   const [audit, setAudit] = useState<AuditEntryInfo[]>([]);
   const [runtime, setRuntime] = useState<Runtime | null>(null);
 
+  const load = (): Promise<unknown> =>
+    Promise.all([
+      fetchSkills().then(setSkills, () => undefined),
+      fetchPolicy().then((r) => setPolicy(r.rules), () => undefined),
+      fetchAudit().then((r) => setAudit(r.entries), () => undefined),
+      fetchRuntime().then(setRuntime, () => undefined),
+    ]);
+
   useEffect(() => {
-    void fetchSkills().then(setSkills, () => undefined);
-    void fetchPolicy().then((r) => setPolicy(r.rules), () => undefined);
-    void fetchAudit().then((r) => setAudit(r.entries), () => undefined);
-    void fetchRuntime().then(setRuntime, () => undefined);
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // The audit log fills as runs happen elsewhere. Watching rows arrive is half the point of the
+  // page, and it only works if the page keeps asking.
+  usePoll(load);
 
   return (
     <>
@@ -114,8 +125,8 @@ export function Provoz(): JSX.Element {
                 <td className="mono subtle">{entry.skill}</td>
                 <td className="name">{entry.toolName}</td>
                 <td>
-                  <span className={`chip ${entry.outcome === 'blocked' ? 'bad' : 'good'}`}>
-                    {entry.outcome === 'blocked' ? cs.ops.outcomeBlocked : cs.ops.outcomeAllowed}
+                  <span className={`chip ${cs.ops.outcomes[entry.outcome]?.tone ?? 'none'}`}>
+                    {cs.ops.outcomes[entry.outcome]?.label ?? entry.outcome}
                   </span>
                 </td>
                 <td className="num">{entry.durationMs === null ? cs.common.none : `${entry.durationMs} ms`}</td>

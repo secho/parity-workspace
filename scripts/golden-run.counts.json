@@ -1,0 +1,22 @@
+{
+  "procedures": 14,
+  "procedure_columns": 504,
+  "procedure_calls": 3,
+  "coupling_edges": 121,
+  "specs": 14,
+  "agent_runs": 84,
+  "agent_steps": 651,
+  "audit_entries": 537,
+  "golden_tests": 85,
+  "invariants": 93,
+  "oracle_runs": 119,
+  "golden_results": 1575,
+  "invariant_results": 501,
+  "shadow_runs": 7,
+  "shadow_cases": 2558,
+  "diffs": 8204,
+  "decisions": 4,
+  "service_artifacts": 5,
+  "pull_requests": 2,
+  "campaign_runs": 1
+}

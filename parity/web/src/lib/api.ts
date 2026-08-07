@@ -307,6 +307,105 @@ export const fetchPullRequest = (
 ): Promise<{ latest: PullRequestRecord | null; readiness: { ready: boolean; reason: string | null; reasonCode: string | null } }> =>
   get(`/api/procedures/${encodeURIComponent(name)}/pr`);
 
+export interface CampaignDefinitionInfo {
+  key: string;
+  title: string;
+  description: string;
+  needsTarget: boolean;
+}
+
+export interface CampaignItemInfo {
+  key: string;
+  label: string;
+  procedure: string | null;
+  step: string | null;
+  status: string;
+  detail: string | null;
+  costUsd: number | null;
+  durationMs: number | null;
+}
+
+export interface CampaignRunInfo {
+  id: number;
+  campaign: string;
+  status: string;
+  target: string | null;
+  items: CampaignItemInfo[];
+  total: number;
+  done: number;
+  skipped: number;
+  failed: number;
+  costUsd: string | null;
+  error: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+}
+
+export const fetchCampaigns = (): Promise<{
+  campaigns: CampaignDefinitionInfo[];
+  runs: CampaignRunInfo[];
+  agentReady: { ready: boolean };
+}> => get('/api/campaigns');
+
+export const fetchCampaignRun = (id: number): Promise<{ run: CampaignRunInfo }> => get(`/api/campaigns/runs/${id}`);
+
+/**
+ * Starts and returns — the run continues in the background and the screen polls for it.
+ *
+ * 409 is a normal answer, not a failure: one campaign at a time, and the second click gets told
+ * so. It comes back as a rejected promise like every other non-2xx, and the caller reads the
+ * status out of the message.
+ */
+export const startCampaign = (key: string, target?: string): Promise<{ run: CampaignRunInfo }> =>
+  send(`/api/campaigns/${encodeURIComponent(key)}`, 'POST', { target: target ?? null });
+
+export interface DemoBeat {
+  key: string;
+  beat: string;
+  title: string;
+  detail: string;
+  expect: string;
+  path: string | null;
+  body?: Record<string, unknown>;
+  link: string | null;
+  done: boolean;
+  note: string | null;
+  slow: boolean;
+}
+
+export interface DemoState {
+  mode: string;
+  /** What `PARITY_MODE` says. Differs from `mode` when the switch has been used this session. */
+  configuredMode: string;
+  replaySpeed: number;
+  target: string;
+  second: string;
+  agentReady: boolean;
+  prReady: boolean;
+  warnings: string[];
+  beats: DemoBeat[];
+}
+
+export const fetchDemo = (): Promise<DemoState> => get<DemoState>('/api/demo');
+
+/**
+ * Flip live ⇄ replay without restarting anything.
+ *
+ * Rejects with 503 if replay is asked for and the replay source is not loaded — which is the
+ * moment to find that out, rather than four beats later.
+ */
+export const setDemoMode = (mode: 'live' | 'replay', speed?: number): Promise<{ mode: string; replaySpeed: number }> =>
+  send('/api/demo/mode', 'POST', { mode, speed });
+
+/**
+ * Run one beat.
+ *
+ * The path comes from the API rather than from this file, so the buttons cannot drift from the
+ * beats: there is one list, it is code, and it lives next to the derivation of `done`.
+ */
+export const runBeat = (path: string, body?: Record<string, unknown>): Promise<unknown> =>
+  send(path, 'POST', body ?? {});
+
 export const fetchQueue = (): Promise<{ open: QueueItem[]; decided: QueueItem[] }> => get('/api/queue');
 export const fetchQueueSummary = (): Promise<QueueSummary> => get<QueueSummary>('/api/queue/summary');
 export const decide = (signature: string, action: string, shadowRunId: number): Promise<unknown> =>

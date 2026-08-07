@@ -108,9 +108,13 @@ async function main(): Promise<void> {
     );
     check(suites.rows[0].n >= 8, 'golden suites on at least 8 procedures', `${suites.rows[0].n}`);
 
+    // Scoped to THIS procedure. Unscoped, "the latest reference run" becomes whichever
+    // procedure was replayed most recently — and from M7 there is more than one.
     const referenceRun = await client.query(
       `SELECT * FROM shadow_runs WHERE implementation_id = 'reference' AND status = 'succeeded' AND kind = 'shadow'
+         AND procedure_id = (SELECT id FROM procedures WHERE name = $1)
        ORDER BY id DESC LIMIT 1`,
+      [TARGET],
     );
     check(referenceRun.rowCount === 1, 'the reference shadow run is still there', referenceRun.rows[0]?.implementation ?? '');
     check(
@@ -162,12 +166,16 @@ async function main(): Promise<void> {
       'every file carries a sha256 and a set hash',
     );
 
-    const health = await getJson<{ status: string; artifact: string | null; database: string }>(`${GENERATED}/health`);
+    // `artifacts` is a map at M7 — one container serves several procedures, so a single
+    // `artifact` field could only ever have named one of them.
+    const health = await getJson<{ status: string; artifacts: Record<string, string | null>; database: string }>(
+      `${GENERATED}/health`,
+    );
     check(health.status === 'ok', 'the generated service is serving', health.status);
     check(
-      health.artifact === latest[0]?.run_hash,
+      health.artifacts?.[TARGET] === latest[0]?.run_hash,
       'and it is serving exactly the artefact the agent wrote',
-      `${health.artifact?.slice(0, 12)} vs ${latest[0]?.run_hash?.slice(0, 12)}`,
+      `${health.artifacts?.[TARGET]?.slice(0, 12)} vs ${latest[0]?.run_hash?.slice(0, 12)}`,
     );
     note('this is the check that makes "what ran is what the agent wrote" a query, not a claim');
     check(health.database === SHADOW_DB, 'against the shadow copy, never the estate', health.database);
@@ -251,7 +259,9 @@ async function main(): Promise<void> {
 
     const green = await client.query(
       `SELECT * FROM shadow_runs WHERE implementation_id = 'generated' AND kind = 'shadow'
+         AND procedure_id = (SELECT id FROM procedures WHERE name = $1)
        ORDER BY id DESC LIMIT 1`,
+      [TARGET],
     );
     check(green.rowCount === 1, 'a shadow run against the generated service exists');
     const g = green.rows[0] ?? {};
@@ -452,9 +462,9 @@ async function main(): Promise<void> {
       const garbage = await call('banana');
       check(garbage.path === 'procedure', 'an unrecognised value falls back to the old path', garbage.path ?? '');
 
-      const liveHealth = await getJson<{ database: string; artifact: string | null }>(`${LIVE}/health`);
+      const liveHealth = await getJson<{ database: string; artifacts: Record<string, string | null> }>(`${LIVE}/health`);
       check(liveHealth.database === ESTATE_DB, 'the flagged target prices against the estate', liveHealth.database);
-      check(liveHealth.artifact === latest[0]?.run_hash, 'running the same artefact as the replay target');
+      check(liveHealth.artifacts?.[TARGET] === latest[0]?.run_hash, 'running the same artefact as the replay target');
 
       const flagged = await sa
         .request()
@@ -530,7 +540,7 @@ async function main(): Promise<void> {
     const prObserved = await probe('src/cli/probe-pr.ts', [TARGET]);
     check(prObserved.attempted === true, 'a live agent tries to open the PR itself');
     check(prObserved.blockedTools !== undefined && (prObserved.blockedTools as string[]).length > 0, 'and the hook refuses it');
-    check(prObserved.openedPrs === 0, 'nothing was opened', `${prObserved.openedPrs} open`);
+    check(prObserved.openedByProbe === 0, 'and it opened nothing', `${prObserved.openedBefore} → ${prObserved.openedAfter} open`);
 
     // --- 9 · The estate moved, honestly ---------------------------------------
     section('9 · The estate moved, honestly');
@@ -539,27 +549,42 @@ async function main(): Promise<void> {
     check(target?.oracle_state === 'proven', 'oracle_state is `proven`', target?.oracle_state ?? '');
     check(target?.campaign_status === 'migrated', 'campaign_status is `migrated`', target?.campaign_status ?? '');
 
-    const estate = await getJson<{ procedures: { name: string; blocker: { key: string } | null }[] }>(`${API}/api/procedures`);
+    const estate = await getJson<{
+      procedures: { name: string; campaignStatus: string; blocker: { key: string } | null }[];
+    }>(`${API}/api/procedures`);
     const shown = estate.procedures.find((p) => p.name === TARGET);
     check(shown?.blocker === null, 'and nothing blocks it any more', JSON.stringify(shown?.blocker));
     note('proven short-circuits ahead of the domain check — domain is null on every row in this estate');
 
-    const others = estate.procedures.filter((p) => p.name !== TARGET);
-    check(others.every((p) => p.blocker !== null || p.name === TARGET), 'every other procedure still reports its blocker');
+    // Every procedure that is still IN the estate's lane. From M7 there are two ways out of it
+    // and both end at a null blocker: migrated with proof, or removed for want of a single caller.
+    // The check is that the column has not gone universally empty — that the other procedures
+    // still show real work — not that nothing else can ever finish.
+    const others = estate.procedures.filter((p) => p.name !== TARGET && p.campaignStatus !== 'deleted');
+    check(
+      others.length > 0 && others.every((p) => p.blocker !== null),
+      'every procedure still in the lane reports its blocker',
+      `${others.length} of ${estate.procedures.length - 1} others`,
+    );
 
     // --- 10 · Reset and determinism -------------------------------------------
     section('10 · Reset and determinism');
 
+    // Scoped to PRs that belong to a procedure. From M7 not all of them do: the deletion PR
+    // removes three procedures at once, carries a NULL `procedure_id`, and therefore does NOT
+    // cascade — `resetState()` names `pull_requests` explicitly for exactly that reason, and
+    // `verify-m7` §8 is where that half is checked. Counting all rows here would have asserted
+    // something that stopped being true and would have been right to fail.
     await client.query('BEGIN');
     const artefactsBefore = await client.query(`SELECT COUNT(*)::int AS n FROM service_artifacts`);
-    const prsBefore = await client.query(`SELECT COUNT(*)::int AS n FROM pull_requests`);
+    const prsBefore = await client.query(`SELECT COUNT(*)::int AS n FROM pull_requests WHERE procedure_id IS NOT NULL`);
     await client.query(`DELETE FROM procedures`);
     const artefactsAfter = await client.query(`SELECT COUNT(*)::int AS n FROM service_artifacts`);
-    const prsAfter = await client.query(`SELECT COUNT(*)::int AS n FROM pull_requests`);
+    const prsAfter = await client.query(`SELECT COUNT(*)::int AS n FROM pull_requests WHERE procedure_id IS NOT NULL`);
     await client.query('ROLLBACK');
 
     check(artefactsBefore.rows[0].n > 0 && artefactsAfter.rows[0].n === 0, 'service_artifacts cascades from procedures');
-    check(prsBefore.rows[0].n > 0 && prsAfter.rows[0].n === 0, 'pull_requests cascades too');
+    check(prsBefore.rows[0].n > 0 && prsAfter.rows[0].n === 0, 'a migration PR cascades too');
     const stillThere = await client.query(`SELECT COUNT(*)::int AS n FROM procedures`);
     check(stillThere.rows[0].n === 14, 'and the rollback held', `${stillThere.rows[0].n}`);
     note('so `make demo-reset` takes the generated service and the PR record with it');

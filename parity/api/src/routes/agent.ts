@@ -5,6 +5,7 @@ import { agentRuns, agentSteps, procedures, specs } from '../db/schema.js';
 import { agentReadiness, type Config } from '../env.js';
 import { executeRun, oracleRun, specRun, triageRun } from '../agent/runner.js';
 import { recordBaseline, runSuite } from '../oracle/suite.js';
+import { findRecording, playRecording } from '../replay/stream.js';
 
 /**
  * Agent runs, and their steps streaming to the UI.
@@ -20,6 +21,47 @@ type Listener = (event: { seq: number; kind: string; toolName: string | null; te
 const listeners = new Map<string, Set<Listener>>();
 
 export async function agentRoutes(app: FastifyInstance, db: Db, config: Config): Promise<void> {
+  /**
+   * Replay a recorded run's steps through the live SSE stream, writing nothing.
+   *
+   * The proof that replay works, and the shape the real thing uses: the recorded steps go
+   * through the same `listeners` fan-out a live run feeds, so the browser is on an identical
+   * code path. Nothing is inserted — `agent_runs` and `agent_steps` are untouched, which is why
+   * this is safe to fire at any moment, including mid-demo.
+   *
+   * It refuses when there is no recording. Emitting nothing would be indistinguishable from a
+   * model that returned nothing, and that is precisely the failure a replay must not have.
+   */
+  app.post<{ Params: { name: string }; Querystring: { skill?: string; speed?: string } }>(
+    '/api/procedures/:name/replay-steps',
+    async (req, reply) => {
+      const skill = req.query.skill ?? 'extract-spec';
+      const speed = req.query.speed === undefined ? undefined : Number(req.query.speed);
+      const recording = await findRecording(db, { skill, procedureName: req.params.name, speed });
+      if (recording === null) {
+        return reply.code(404).send({ error: `no recorded ${skill} run for ${req.params.name}` });
+      }
+
+      const started = Date.now();
+      // Deliberately awaited: the caller wants to know it finished and how long it took, and a
+      // dry run of nine steps at speed is seconds, not minutes.
+      await playRecording(recording, (step) => {
+        for (const listener of listeners.get(req.params.name) ?? []) listener(step);
+      });
+
+      return {
+        replayed: recording.steps.length,
+        runId: recording.runId,
+        skill: recording.skill,
+        model: recording.model,
+        recordedMs: recording.durationMs,
+        elapsedMs: Date.now() - started,
+        subscribers: listeners.get(req.params.name)?.size ?? 0,
+        wrote: 'nothing',
+      };
+    },
+  );
+
   const start = async (
     procedureName: string,
     kind: 'triage' | 'spec' | 'oracle',
